@@ -14,7 +14,6 @@
   "type": "commonjs",
   "dependencies": {
     "bcryptjs": "^3.0.2",
-    "cloudinary": "^2.8.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
@@ -30,6 +29,7 @@
     "qrcode-reader": "^1.0.4",
     "razorpay": "^2.9.6",
     "socket.io": "^4.8.1",
+    "streamifier": "^0.1.1",
     "twilio": "^5.10.3"
   },
   "devDependencies": {
