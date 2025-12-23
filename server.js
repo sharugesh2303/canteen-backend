@@ -78,7 +78,7 @@ const PORT = process.env.PORT || 10000;
 const server = http.createServer(app); 
 const io = new Server(server, { 
     cors: {
-        origin: ['https://chefui.vercel.app', 'https://jj-canteen-admin.vercel.app', 'http://localhost:5174'], 
+        origin: ['https://chefui.vercel.app', 'https://canteen-admin-bay.vercel.app', 'http://localhost:5174'], 
         methods: ["GET", "POST", "PATCH"],
         credentials: true
     }
