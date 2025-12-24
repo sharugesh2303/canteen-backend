@@ -115,7 +115,7 @@ const whitelist = [
     'http://localhost:5175',
     'https://canteen-admin-bay.vercel.app',
     'https://jjcet-canteen.vercel.app',
-    'https://canteen-chef.vercel.app/',
+    'https://canteen-chef.vercel.app',
 ];
 
 const corsOptions = {
