@@ -8,6 +8,8 @@ const jwt = require('jsonwebtoken');
 const { nanoid } = require('nanoid');
 const path = require('path');
 const multer = require('multer');
+const cloudinary = require('cloudinary').v2; // UPDATED: Added Cloudinary
+const { CloudinaryStorage } = require('multer-storage-cloudinary'); // UPDATED: Added Cloudinary Storage
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer'); // RE-ENABLE NODEMAILER
@@ -30,6 +32,23 @@ const DeliveryStaff = require('./models/DeliveryStaff');
 const auth = require('./middleware/auth');
 const adminAuth = require('./middleware/adminAuth');
 const deliveryAuth = require('./middleware/deliveryAuth');
+
+// --- UPDATED: Cloudinary Configuration (Keys used from .env) ---
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+// Setup Cloudinary Storage Instance (Replacing local storage)
+const storage = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+        folder: 'jj_canteen_uploads', // Folder name in your Cloudinary media library
+        allowed_formats: ['jpg', 'png', 'jpeg', 'webp'],
+    },
+});
+const upload = multer({ storage: storage });
 
 // --- CanteenStatus Model Definition ---
 const CanteenStatus = mongoose.models.CanteenStatus || mongoose.model('CanteenStatus', new mongoose.Schema({
@@ -106,12 +125,12 @@ const transporter = nodemailer.createTransport({
 // --- Middleware Setup ---
 
 const whitelist = [
+    'http://localhost:5173', // 🟢 ADD THIS: Standard Vite development port
+    'http://localhost:5174',
     'https://chefui.vercel.app',
     'https://jj-canteen-admin.vercel.app',
     'https://jjcetcanteen.vercel.app',
     'https://jcetcanteen.vercel.app', 
-    'http://localhost:5173',
-    'http://localhost:5174', 
     'http://localhost:5175',
     'https://canteen-admin-bay.vercel.app',
     'https://jjcet-canteen.vercel.app',
@@ -135,12 +154,6 @@ app.use(express.json());
 app.use((req, res, next) => { console.log(`Incoming Request: ${req.method} ${req.url}`); next(); });
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => { cb(null, path.join(__dirname, 'uploads/')); },
-    filename: (req, file, cb) => { cb(null, Date.now() + path.extname(file.originalname)); }
-});
-const upload = multer({ storage: storage });
 
 // --- Database Connection ---
 mongoose.connect(mongoURI)
@@ -596,7 +609,8 @@ app.post('/api/menu', adminAuth, upload.single('image'), async (req, res) => {
         return res.status(400).json({ msg: 'Stock must be a non-negative number.' });
     }
 
-    const imageUrl = req.file ? `/uploads/${req.file.filename}` : '';
+    // UPDATED: Using Cloudinary Secure URL (req.file.path)
+    const imageUrl = req.file ? req.file.path : '';
 
     try {
         const newItem = new MenuItem({
@@ -650,8 +664,9 @@ app.put('/api/menu/:id', adminAuth, upload.single('image'), async (req, res) => 
         subCategory: (subCategory && mongoose.Types.ObjectId.isValid(subCategory)) ? subCategory : null
     };
 
+    // UPDATED: Using Cloudinary Secure URL (req.file.path)
     if (req.file) {
-        updateData.imageUrl = `/uploads/${req.file.filename}`;
+        updateData.imageUrl = req.file.path;
     }
     try {
         const updatedItem = await MenuItem.findByIdAndUpdate(id, updateData, { new: true });
@@ -752,7 +767,7 @@ app.post('/api/payment/verify', auth, async (req, res) => {
 
         // --- Socket.io Broadcast: Notify staff dashboard of the new Paid order
         const populatedOrder = await savedOrder.populate('student', 'name'); 
-        io.emit('orderUpdate', { action: 'newOrder', order: populatedOrder.toObject() });
+        io.emit('orderUpdate', { action: 'statusChange', order: populatedOrder.toObject() });
         // -------------------------------
 
         res.status(201).json({ message: 'Payment successful!', order: savedOrder });
@@ -1006,12 +1021,15 @@ app.get('/api/admin/advertisements', adminAuth, async (req, res) => {
         res.status(500).send('Server Error');
     }
 });
+
+// UPDATED ADVERTISEMENT UPLOAD ROUTE WITH CLOUDINARY
 app.post('/api/admin/advertisements', adminAuth, upload.single('image'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ message: 'Image file is required.' });
     }
     try {
-        const imageUrl = `/uploads/${req.file.filename}`;
+        // UPDATED: Using req.file.path (Cloudinary Secure URL)
+        const imageUrl = req.file.path;
 
         const newAd = new Advertisement({ imageUrl, isActive: true });
         await newAd.save();
@@ -1021,6 +1039,7 @@ app.post('/api/admin/advertisements', adminAuth, upload.single('image'), async (
         res.status(500).send('Server Error');
     }
 });
+
 app.delete('/api/admin/advertisements/:id', adminAuth, async (req, res) => {
     try {
         const ad = await Advertisement.findByIdAndDelete(req.params.id);
@@ -1047,6 +1066,8 @@ app.patch('/api/admin/advertisements/:id/toggle', adminAuth, async (req, res) =>
 
 
 // --- SUBCATEGORY API ROUTES ---
+
+// UPDATED SUBCATEGORY CREATE ROUTE WITH CLOUDINARY
 app.post('/api/admin/subcategories', [adminAuth, upload.single('image')], async (req, res) => {
     const { name } = req.body;
 
@@ -1057,12 +1078,13 @@ app.post('/api/admin/subcategories', [adminAuth, upload.single('image')], async 
         return res.status(400).json({ msg: 'Please provide a non-empty name' });
     }
 
-    const imageUrl = `/uploads/${req.file.filename}`;
+    // UPDATED: Using req.file.path (Cloudinary Secure URL)
+    const imageUrl = req.file.path;
 
     try {
         let sub = await SubCategory.findOne({ name: { $regex: new RegExp(`^${name.trim()}$`, 'i') } });
         if (sub) {
-            fs.unlinkSync(req.file.path);
+            // Note: fs.unlinkSync is removed as images are directly in Cloudinary
             return res.status(400).json({ msg: 'Subcategory with this name already exists.' });
         }
         sub = new SubCategory({
@@ -1090,17 +1112,15 @@ app.get('/api/subcategories', async (req, res) => {
     }
 });
 
-// Edit SubCategory Name AND Image
+// Edit SubCategory Name AND Image WITH CLOUDINARY
 app.put('/api/admin/subcategories/:id', [adminAuth, upload.single('image')], async (req, res) => {
     const { name } = req.body;
     const { id } = req.params;
 
     if (!name || name.trim() === '') {
-        if (req.file) { fs.unlinkSync(req.file.path); }
         return res.status(400).json({ msg: 'Please provide a non-empty name' });
     }
     if (!mongoose.Types.ObjectId.isValid(id)) {
-        if (req.file) { fs.unlinkSync(req.file.path); }
         return res.status(400).json({ msg: 'Invalid subcategory ID format.' });
     }
 
@@ -1110,18 +1130,14 @@ app.put('/api/admin/subcategories/:id', [adminAuth, upload.single('image')], asy
             _id: { $ne: id } 
         });
         if (existingSub) {
-            if (req.file) { fs.unlinkSync(req.file.path); }
             return res.status(400).json({ msg: 'Another subcategory with this name already exists.' });
         }
 
         const updateData = { name: name.trim() };
-        let oldImagePath = null; 
 
         if (req.file) {
-            updateData.imageUrl = `/uploads/${req.file.filename}`;
-            
-            const oldSub = await SubCategory.findById(id).select('imageUrl');
-            if (oldSub) { oldImagePath = oldSub.imageUrl; }
+            // UPDATED: Using req.file.path (Cloudinary Secure URL)
+            updateData.imageUrl = req.file.path;
         }
 
         const updatedSub = await SubCategory.findByIdAndUpdate(
@@ -1131,26 +1147,14 @@ app.put('/api/admin/subcategories/:id', [adminAuth, upload.single('image')], asy
         );
 
         if (!updatedSub) {
-            if (req.file) { fs.unlinkSync(req.file.path); }
             return res.status(404).json({ msg: 'Subcategory not found' });
         }
         
-        if (oldImagePath && oldImagePath.startsWith('/uploads/')) {
-              try {
-                  const fullPath = path.join(__dirname, oldImagePath);
-                  if (fs.existsSync(fullPath)) {
-                      fs.unlinkSync(fullPath);
-                      console.log(`Successfully deleted old image: ${oldImagePath}`);
-                  }
-              } catch (deleteError) {
-                  console.error(`Warning: Failed to delete old image file ${oldImagePath}:`, deleteError.message);
-              }
-            }
+        // Note: fs.unlinkSync logic removed as images are managed by Cloudinary
 
         res.json(updatedSub);
     } catch (err) {
         console.error(`Error updating subcategory ${id}:`, err.message);
-        if (req.file) { fs.unlinkSync(req.file.path); } 
         if (err.name === 'ValidationError') {
             return res.status(400).json({ msg: err.message });
         }
@@ -1179,17 +1183,7 @@ app.delete('/api/admin/subcategories/:id', adminAuth, async (req, res) => {
             return res.status(404).json({ msg: 'Subcategory not found' });
         }
 
-        if (sub.imageUrl && sub.imageUrl.startsWith('/uploads/')) {
-            try {
-                const fullPath = path.join(__dirname, sub.imageUrl);
-                if (fs.existsSync(fullPath)) {
-                    fs.unlinkSync(fullPath);
-                    console.log(`Successfully deleted old image: ${sub.imageUrl}`);
-                }
-            } catch (deleteError) {
-                console.error(`Warning: Failed to delete old image file ${sub.imageUrl}:`, deleteError.message);
-            }
-        }
+        // Note: fs.unlinkSync logic removed as images are managed by Cloudinary
 
         res.json({ msg: 'Subcategory deleted successfully' });
 
