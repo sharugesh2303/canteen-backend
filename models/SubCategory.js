@@ -1,20 +1,31 @@
-const mongoose = require('mongoose');
-const Schema = mongoose.Schema;
+const mongoose = require("mongoose");
 
-const SubCategorySchema = new Schema({
+/* ================= SUB CATEGORY SCHEMA ================= */
+const SubCategorySchema = new mongoose.Schema(
+  {
     name: {
-        type: String,
-        required: true,
-        unique: true
+      type: String,
+      required: true,
+      unique: true,
+      trim: true
     },
-    imageUrl: {
-        type: String,
-        required: true // This will be the path to the uploaded image
-    },
-    date: {
-        type: Date,
-        default: Date.now
-    }
-});
 
-module.exports = mongoose.model('subcategory', SubCategorySchema);
+    imageUrl: {
+      type: String,
+      required: true,
+      trim: true
+    }
+  },
+  {
+    timestamps: true
+  }
+);
+
+/* ================= EXPORT =================
+   IMPORTANT:
+   Model name MUST be "SubCategory"
+   This MUST match:
+   - ref: "SubCategory"
+   - mongoose.model("SubCategory")
+================================================= */
+module.exports = mongoose.model("SubCategory", SubCategorySchema);
