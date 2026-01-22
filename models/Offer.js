@@ -68,7 +68,7 @@ const offerSchema = new mongoose.Schema(
 
 /* ======================================================
    🔁 AUTO-EXPIRE LOGIC (MODEL LEVEL)
-====================================================== */
+==================================================== */
 
 // Virtual field: is currently valid
 offerSchema.virtual("isCurrentlyValid").get(function () {

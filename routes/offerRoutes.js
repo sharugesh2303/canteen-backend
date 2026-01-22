@@ -6,7 +6,7 @@ const router = express.Router();
 const Offer = mongoose.model("Offer");
 
 /* ======================================================
-   ✅ Helper: combine date + time into Date object
+   ✅ Helper: combine date + time into Date objec
 ====================================================== */
 function combineDateAndTime(date, time) {
   const [hours, minutes] = time.split(":").map(Number);
