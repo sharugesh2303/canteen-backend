@@ -7,11 +7,11 @@ const cors = require("cors");
 const http = require("http");
 const mongoose = require("mongoose");
 const { Server } = require("socket.io");
+const crypto = require("crypto");
 require("dotenv").config();
 
 /* ======================================================
     LOAD MODELS
-    (Must be loaded before routes to avoid MissingSchemaError)
 ====================================================== */
 require("./models/MenuItem");
 require("./models/Order");
@@ -21,8 +21,6 @@ require("./models/SubCategory");
 require("./models/Advertisement");
 require("./models/Feedback");
 require("./models/ServiceHours");
-
-/* ✅ OFFERS MODEL */
 require("./models/Offer");
 
 /* ======================================================
@@ -36,16 +34,25 @@ const subCategoryRoutes = require("./routes/subcategories");
 const advertisementRoutes = require("./routes/advertisementRoutes");
 const feedbackRoutes = require("./routes/feedbackRoutes");
 const serviceHoursRoutes = require("./routes/serviceHoursRoutes");
-
-/* ✅ OFFERS ROUTES */
 const offerRoutes = require("./routes/offerRoutes");
 
+// ✅ STAFF ROUTES
+const staffAuthRoutes = require("./routes/staffAuthRoutes");
+const staffOrderRoutes = require("./routes/staffOrderRoutes");
+
 /* ======================================================
-    VALIDATE ROUTES (🔥 CRITICAL FIX)
+    VALIDATE ROUTES
 ====================================================== */
 if (typeof offerRoutes !== "function") {
   console.error("❌ offerRoutes is NOT a router function");
-  console.error("👉 Check routes/offerRoutes.js export");
+  process.exit(1);
+}
+if (typeof staffAuthRoutes !== "function") {
+  console.error("❌ staffAuthRoutes is NOT a router function");
+  process.exit(1);
+}
+if (typeof staffOrderRoutes !== "function") {
+  console.error("❌ staffOrderRoutes is NOT a router function");
   process.exit(1);
 }
 
@@ -71,6 +78,24 @@ app.use(cors());
 app.use(express.json());
 
 /* ======================================================
+    ✅ DEVICE HASH HELPER (SAME AS backend)
+====================================================== */
+function hashDeviceId(deviceId) {
+  return crypto.createHash("sha256").update(deviceId).digest("hex");
+}
+
+/* ======================================================
+    ✅ SOCKET MAP STORAGE
+    KEY -> socketId
+    We store BOTH raw and hashed to avoid mismatch issues.
+====================================================== */
+const studentSockets = new Map();
+
+// expose io and map to all routes
+app.set("io", io);
+app.set("studentSockets", studentSockets);
+
+/* ======================================================
     DATABASE CONNECTION
 ====================================================== */
 mongoose
@@ -85,10 +110,16 @@ mongoose
     ROUTES REGISTRATION
 ====================================================== */
 
-// 1. Orders (Student & Admin)
+// ✅ Staff Login/Register Routes
+app.use("/api/staff", staffAuthRoutes);
+
+// ✅ Staff Orders Route
+app.use("/api/staff", staffOrderRoutes);
+
+// ✅ Orders Route (Student & Admin)
 app.use("/api/orders", orderRoutes);
 
-// 2. Admin Modules
+// ✅ Admin Modules
 app.use("/api/admin", adminAuthRoutes);
 app.use("/api/admin", revenueRoutes);
 app.use("/api/admin/advertisements", advertisementRoutes);
@@ -96,16 +127,17 @@ app.use("/api/admin/feedback", feedbackRoutes);
 app.use("/api/admin/menu", menuRoutes);
 app.use("/api/admin/subcategories", subCategoryRoutes);
 
-/* ✅ ADMIN OFFERS */
+// ✅ Offers
 app.use("/api/admin/offers", offerRoutes);
+app.use("/api/offers", offerRoutes);
 
-// 3. Public / Student APIs
+// ✅ Public / Student APIs
 app.use("/api/feedback", feedbackRoutes);
 app.use("/api/menu", menuRoutes);
 app.use("/api/subcategories", subCategoryRoutes);
-app.use("/api", serviceHoursRoutes); // /service-hours/public
+app.use("/api", serviceHoursRoutes);
 
-// 4. Advertisement fallback
+// ✅ Advertisement fallback
 app.use("/advertisements", advertisementRoutes);
 
 /* ======================================================
@@ -129,8 +161,10 @@ app.get("/api/menu/public", async (req, res) => {
   try {
     const MenuItem = mongoose.model("MenuItem");
 
-    const items = await MenuItem.find({ stock: { $gt: 0 } })
-      .populate("subCategory", "name imageUrl");
+    const items = await MenuItem.find({ stock: { $gt: 0 } }).populate(
+      "subCategory",
+      "name imageUrl"
+    );
 
     res.json(items);
   } catch (err) {
@@ -140,13 +174,61 @@ app.get("/api/menu/public", async (req, res) => {
 });
 
 /* ======================================================
-    SOCKET EVENTS
+    ✅ SOCKET EVENTS (REALTIME NOTIFICATION SYSTEM)
 ====================================================== */
 io.on("connection", (socket) => {
   console.log("🔌 Socket connected:", socket.id);
 
+  /*
+    Student should emit one of:
+      socket.emit("register_student", { deviceId })
+      socket.emit("register_student", deviceId)
+  */
+  socket.on("register_student", (payload) => {
+    try {
+      let deviceId = null;
+
+      if (typeof payload === "string") {
+        deviceId = payload;
+      } else if (payload && typeof payload === "object") {
+        deviceId = payload.deviceId;
+      }
+
+      if (!deviceId) {
+        console.log("⚠️ register_student called without deviceId");
+        return;
+      }
+
+      // ✅ store exact key
+      studentSockets.set(deviceId, socket.id);
+
+      // ✅ if incoming is raw, also store hashed
+      // ✅ if incoming is hashed, also try to store raw? (cannot reverse hash)
+      // So best: always store hashed version too (if possible)
+      const hashed = deviceId.length === 64 ? deviceId : hashDeviceId(deviceId);
+      studentSockets.set(hashed, socket.id);
+
+      console.log("✅ Student registered deviceId:", deviceId, "->", socket.id);
+      console.log("✅ Student registered hashed :", hashed, "->", socket.id);
+
+      console.log("📌 Total Connected Students:", studentSockets.size);
+    } catch (err) {
+      console.error("❌ register_student error:", err.message);
+    }
+  });
+
   socket.on("disconnect", () => {
     console.log("❌ Socket disconnected:", socket.id);
+
+    // remove mapping for this socket
+    for (const [deviceId, sId] of studentSockets.entries()) {
+      if (sId === socket.id) {
+        studentSockets.delete(deviceId);
+        console.log("🗑️ Removed student mapping:", deviceId);
+      }
+    }
+
+    console.log("📌 Total Connected Students:", studentSockets.size);
   });
 });
 

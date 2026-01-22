@@ -5,7 +5,7 @@ const OrderItemSchema = new mongoose.Schema(
   {
     name: String,
     price: Number,
-    quantity: Number
+    quantity: Number,
   },
   { _id: false }
 );
@@ -19,52 +19,57 @@ const OrderSchema = new mongoose.Schema(
     /* Amount */
     totalAmount: {
       type: Number,
-      required: true
+      required: true,
     },
 
     /* Pickup */
     collectionTime: {
       type: String,
-      required: true
+      required: true,
     },
 
     /* Payment */
     paymentMethod: {
       type: String,
       enum: ["RAZORPAY"],
-      required: true
+      required: true,
     },
+
     paymentStatus: {
       type: String,
       enum: ["PAID", "FAILED", "PENDING"],
-      default: "PENDING"
+      default: "PENDING",
     },
+
     paymentId: String,
+
+    /* ✅ ORDER STATUS (Kitchen Progress) */
+    orderStatus: {
+      type: String,
+      enum: ["PLACED", "PREPARING", "READY", "COLLECTED"],
+      default: "PLACED",
+    },
 
     /* 🔐 DEVICE IDENTIFIER (NO LOGIN) */
     deviceId: {
       type: String,
       required: true,
-      index: true
+      index: true,
     },
 
     /* Bill & QR */
     billNumber: {
       type: String,
-      unique: true
+      unique: true,
     },
+
     qrNumber: {
       type: String,
-      unique: true
+      unique: true,
     },
+
     qrImage: String,
     qrVisibleAt: Date,
-
-    /* Timestamps */
-    createdAt: {
-      type: Date,
-      default: Date.now
-    }
   },
   { timestamps: true }
 );
