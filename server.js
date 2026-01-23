@@ -23,6 +23,9 @@ require("./models/Feedback");
 require("./models/ServiceHours");
 require("./models/Offer");
 
+// ✅ Notification Token model
+require("./models/NotificationToken");
+
 /* ======================================================
     LOAD ROUTES
 ====================================================== */
@@ -40,6 +43,9 @@ const offerRoutes = require("./routes/offerRoutes");
 const staffAuthRoutes = require("./routes/staffAuthRoutes");
 const staffOrderRoutes = require("./routes/staffOrderRoutes");
 
+// ✅ Notification routes
+const notificationRoutes = require("./routes/notificationRoutes");
+
 /* ======================================================
     VALIDATE ROUTES
 ====================================================== */
@@ -55,6 +61,10 @@ if (typeof staffOrderRoutes !== "function") {
   console.error("❌ staffOrderRoutes is NOT a router function");
   process.exit(1);
 }
+if (typeof notificationRoutes !== "function") {
+  console.error("❌ notificationRoutes is NOT a router function");
+  process.exit(1);
+}
 
 /* ======================================================
     APP & SERVER SETUP
@@ -67,6 +77,9 @@ const io = new Server(server, {
     origin: "*",
     methods: ["GET", "POST", "PATCH", "DELETE"],
   },
+
+  // ✅ prefer websocket (stable for Android)
+  transports: ["websocket"],
 });
 
 const PORT = process.env.PORT || 10000;
@@ -75,10 +88,18 @@ const PORT = process.env.PORT || 10000;
     GLOBAL MIDDLEWARE
 ====================================================== */
 app.use(cors());
+
+// ✅ JSON support
 app.use(express.json());
 
+// ✅ NEW (RECOMMENDED): urlencoded support (WebView HTML / forms safe)
+app.use(express.urlencoded({ extended: true }));
+
+// ✅ OPTIONAL: serve static files (logo/css for bill)
+app.use("/public", express.static("public"));
+
 /* ======================================================
-    ✅ DEVICE HASH HELPER (SAME AS backend)
+    ✅ DEVICE HASH HELPER
 ====================================================== */
 function hashDeviceId(deviceId) {
   return crypto.createHash("sha256").update(deviceId).digest("hex");
@@ -86,8 +107,6 @@ function hashDeviceId(deviceId) {
 
 /* ======================================================
     ✅ SOCKET MAP STORAGE
-    KEY -> socketId
-    We store BOTH raw and hashed to avoid mismatch issues.
 ====================================================== */
 const studentSockets = new Map();
 
@@ -109,6 +128,9 @@ mongoose
 /* ======================================================
     ROUTES REGISTRATION
 ====================================================== */
+
+// ✅ Register tokens for push notifications
+app.use("/api/notifications", notificationRoutes);
 
 // ✅ Staff Login/Register Routes
 app.use("/api/staff", staffAuthRoutes);
@@ -203,14 +225,11 @@ io.on("connection", (socket) => {
       studentSockets.set(deviceId, socket.id);
 
       // ✅ if incoming is raw, also store hashed
-      // ✅ if incoming is hashed, also try to store raw? (cannot reverse hash)
-      // So best: always store hashed version too (if possible)
       const hashed = deviceId.length === 64 ? deviceId : hashDeviceId(deviceId);
       studentSockets.set(hashed, socket.id);
 
       console.log("✅ Student registered deviceId:", deviceId, "->", socket.id);
       console.log("✅ Student registered hashed :", hashed, "->", socket.id);
-
       console.log("📌 Total Connected Students:", studentSockets.size);
     } catch (err) {
       console.error("❌ register_student error:", err.message);

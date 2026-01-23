@@ -3,9 +3,23 @@ const mongoose = require("mongoose");
 /* ---------------- ORDER ITEM ---------------- */
 const OrderItemSchema = new mongoose.Schema(
   {
-    name: String,
-    price: Number,
-    quantity: Number,
+    // ✅ menu item id (optional but helpful)
+    itemId: { type: String },
+
+    // ✅ item name
+    name: { type: String, required: true },
+
+    // ✅ quantity
+    quantity: { type: Number, required: true, min: 1 },
+
+    // ✅ FINAL unit price (after offer) - actual pay price
+    unitPrice: { type: Number, required: true },
+
+    // ✅ Original price (MRP/before discount) - for strike display
+    originalPrice: { type: Number, default: 0 },
+
+    // ✅ offer percentage used
+    offerPercent: { type: Number, default: 0 },
   },
   { _id: false }
 );
@@ -14,7 +28,7 @@ const OrderItemSchema = new mongoose.Schema(
 const OrderSchema = new mongoose.Schema(
   {
     /* Items */
-    items: [OrderItemSchema],
+    items: { type: [OrderItemSchema], default: [] },
 
     /* Amount */
     totalAmount: {

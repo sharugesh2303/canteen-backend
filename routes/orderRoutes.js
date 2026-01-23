@@ -10,12 +10,26 @@ const { generateQrImage } = require("../utils/qr");
 const { hashDeviceId } = require("../utils/hash");
 const adminAuth = require("../middleware/adminAuth");
 
+// ✅ Notification token model
+const NotificationToken = require("../models/NotificationToken");
+
+// ✅ Firebase Admin init
+const admin = require("../firebase/firebaseAdmin");
+
 /* =========================================================
     ✅ helper: detect if deviceId already hashed (sha256)
 ========================================================= */
 function isAlreadyHashedDeviceId(deviceId) {
   // sha256 hex length = 64
   return typeof deviceId === "string" && /^[a-f0-9]{64}$/i.test(deviceId);
+}
+
+/* =========================================================
+    ✅ helper: safe rupee formatter
+========================================================= */
+function rupee(n) {
+  const num = Number(n || 0);
+  return num.toFixed(0);
 }
 
 /* =========================================================
@@ -33,7 +47,7 @@ router.get("/admin/all", adminAuth, async (req, res) => {
 });
 
 /* =========================================================
-    ✅ MARK ORDER READY + SEND SOCKET NOTIFICATION
+    ✅ MARK ORDER READY + SEND SOCKET + SEND FCM PUSH
     Endpoint: PATCH /api/orders/admin/:billNumber/mark-ready
 ========================================================= */
 router.patch("/admin/:billNumber/mark-ready", adminAuth, async (req, res) => {
@@ -72,15 +86,50 @@ router.patch("/admin/:billNumber/mark-ready", adminAuth, async (req, res) => {
         console.log(
           "📌 Connected deviceIds:",
           Array.from(studentSockets.keys()).slice(0, 5),
-          studentSockets.size > 5 ? `... +${studentSockets.size - 5} more` : ""
+          studentSockets.size > 5
+            ? `... +${studentSockets.size - 5} more`
+            : ""
         );
       }
     } else {
       console.log("⚠️ Socket not available or missing deviceId");
     }
 
+    /* =========================================================
+        ✅ SEND PUSH NOTIFICATION (FCM)
+    ========================================================= */
+    try {
+      if (!order.deviceId) {
+        console.log("⚠️ Order deviceId missing. Skipping FCM.");
+      } else {
+        const tokenDoc = await NotificationToken.findOne({
+          deviceId: order.deviceId,
+        });
+
+        if (tokenDoc?.fcmToken) {
+          await admin.messaging().send({
+            token: tokenDoc.fcmToken,
+            notification: {
+              title: "Order Ready ✅",
+              body: "Your order is ready! Please collect from counter.",
+            },
+            data: {
+              billNumber: order.billNumber || "",
+              status: "READY",
+            },
+          });
+
+          console.log("✅ FCM order-ready notification sent");
+        } else {
+          console.log("⚠️ No FCM token registered for deviceId:", order.deviceId);
+        }
+      }
+    } catch (fcmErr) {
+      console.error("❌ FCM SEND ERROR:", fcmErr.message);
+    }
+
     res.json({
-      message: "✅ Order marked as READY and student notified",
+      message: "✅ Order marked READY, student notified via socket + FCM",
       order,
     });
   } catch (err) {
@@ -149,10 +198,11 @@ router.post("/", async (req, res) => {
     console.log("📌 ORDER CREATE incomingDeviceId:", incomingDeviceId);
     console.log("📌 ORDER CREATE stored deviceId (hashed):", deviceId);
 
-    // Generate unique identifiers
+    // ✅ Generate unique identifiers
     const billNumber = "BILL-" + Date.now();
     const qrNumber = crypto.randomUUID();
 
+    // ✅ QR should open bill page (for student + chef)
     const qrUrl = `${
       process.env.BASE_URL || "http://localhost:10000"
     }/api/orders/bill/${qrNumber}`;
@@ -236,6 +286,36 @@ router.get("/admin/daily-revenue", adminAuth, async (req, res) => {
 });
 
 /* =========================================================
+    ✅ NEW: GET ORDER DETAILS BY QR (JSON)
+    Endpoint: GET /api/orders/details/:qrNumber
+    (Chef app / Admin use)
+========================================================= */
+router.get("/details/:qrNumber", async (req, res) => {
+  try {
+    const order = await Order.findOne({ qrNumber: req.params.qrNumber });
+
+    if (!order) {
+      return res.status(404).json({ message: "Invalid QR Code" });
+    }
+
+    res.json({
+      billNumber: order.billNumber,
+      qrNumber: order.qrNumber,
+      createdAt: order.createdAt,
+      collectionTime: order.collectionTime,
+      paymentStatus: order.paymentStatus,
+      paymentMethod: order.paymentMethod,
+      orderStatus: order.orderStatus,
+      totalAmount: order.totalAmount,
+      items: order.items || [],
+    });
+  } catch (err) {
+    console.error("❌ ORDER DETAILS ERROR:", err);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+/* =========================================================
     5. BILL PAGE (QR VIEW – PUBLIC)
     Endpoint: GET /api/orders/bill/:qrNumber
 ========================================================= */
@@ -249,20 +329,45 @@ router.get("/bill/:qrNumber", async (req, res) => {
 
     const formattedDate = new Date(order.createdAt).toLocaleString("en-IN");
 
+    // ✅ Build items rows
+    const itemRows = (order.items || [])
+      .map((it, index) => {
+        const name = it.name || it.itemName || "Item";
+        const qty = Number(it.quantity || 0);
+        const unit = Number(it.price || 0);
+        const subtotal = unit * qty;
+
+        return `
+          <tr>
+            <td>${index + 1}</td>
+            <td style="text-align:left;">${name}</td>
+            <td style="text-align:center;">${qty}</td>
+            <td style="text-align:right;">₹${rupee(unit)}</td>
+            <td style="text-align:right;">₹${rupee(subtotal)}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
     res.send(`
       <html>
         <head>
           <title>Canteen Bill - ${order.billNumber}</title>
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <style>
-            body { font-family: 'Segoe UI', sans-serif; padding: 20px; color: #333; }
-            .bill-container { max-width: 400px; margin: auto; border: 2px solid #eee; padding: 20px; border-radius: 10px; }
+            body { font-family: 'Segoe UI', sans-serif; padding: 20px; color: #333; background:#fafafa; }
+            .bill-container { max-width: 430px; margin: auto; border: 2px solid #eee; padding: 16px; border-radius: 14px; background:white; }
             .header { text-align: center; border-bottom: 2px dashed #eee; padding-bottom: 10px; }
-            .qr-section { text-align: center; margin: 20px 0; }
-            .qr-section img { width: 220px; height: 220px; }
-            .details { margin-top: 15px; font-size: 14px; }
-            .total-row { font-size: 18px; font-weight: bold; color: #e67e22; border-top: 1px solid #eee; padding-top: 10px; margin-top: 10px; }
+            .qr-section { text-align: center; margin: 16px 0; }
+            .qr-section img { width: 200px; height: 200px; }
+            .details { margin-top: 10px; font-size: 14px; }
             .status-paid { color: #27ae60; font-weight: bold; }
+            .status-fail { color:#e74c3c; font-weight:bold; }
+            .total-row { font-size: 18px; font-weight: bold; color: #e67e22; border-top: 1px solid #eee; padding-top: 10px; margin-top: 10px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; }
+            th, td { border-bottom: 1px solid #eee; padding: 8px; }
+            th { background: #f5f5f5; text-align: left; }
+            .footer { text-align:center; margin-top: 14px; font-size: 12px; color:#999; }
           </style>
         </head>
         <body>
@@ -271,19 +376,51 @@ router.get("/bill/:qrNumber", async (req, res) => {
               <h2>🧾 JJ Canteen Bill</h2>
               <p>${formattedDate}</p>
             </div>
+
             <div class="qr-section">
               <img src="${order.qrImage}" alt="Order QR"/>
               <p><strong>Scan at Counter</strong></p>
             </div>
+
             <div class="details">
               <p><b>Bill No:</b> ${order.billNumber}</p>
               <p><b>Collection:</b> ${order.collectionTime}</p>
               <p><b>Payment:</b> ${order.paymentMethod}</p>
-              <p><b>Status:</b> <span class="status-paid">${order.paymentStatus}</span></p>
+
+              <p>
+                <b>Status:</b>
+                <span class="${
+                  order.paymentStatus === "PAID" ? "status-paid" : "status-fail"
+                }">
+                  ${order.paymentStatus}
+                </span>
+              </p>
+
               <p><b>Order Status:</b> ${order.orderStatus || "N/A"}</p>
+
+              <!-- ✅ ITEMS TABLE -->
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Item</th>
+                    <th style="text-align:center;">Qty</th>
+                    <th style="text-align:right;">Price</th>
+                    <th style="text-align:right;">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${itemRows || `<tr><td colspan="5">No items</td></tr>`}
+                </tbody>
+              </table>
+
               <div class="total-row">
-                Total Amount: ₹${order.totalAmount}
+                Total Amount: ₹${rupee(order.totalAmount)}
               </div>
+            </div>
+
+            <div class="footer">
+              Thank you ❤️ JJ Canteen
             </div>
           </div>
         </body>
