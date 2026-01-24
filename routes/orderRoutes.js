@@ -74,7 +74,7 @@ router.patch("/admin/:billNumber/mark-ready", adminAuth, async (req, res) => {
     await order.save();
 
     /* =========================================================
-        ✅ SEND SOCKET NOTIFICATION
+        ✅ SEND SOCKET NOTIFICATION (Event: orderReady)
     ========================================================= */
     const io = req.app.get("io");
     const studentSockets = req.app.get("studentSockets");
@@ -85,12 +85,13 @@ router.patch("/admin/:billNumber/mark-ready", adminAuth, async (req, res) => {
       const socketId = studentSockets.get(order.deviceId);
 
       if (socketId) {
-        io.to(socketId).emit("order_ready", {
+        // 🔥 FIXED: Changed "order_ready" to "orderReady" to match Android App
+        io.to(socketId).emit("orderReady", {
           billNumber: order.billNumber,
           message: "✅ Your order is ready! Please collect from counter.",
         });
 
-        console.log("✅ order_ready sent to socket:", socketId);
+        console.log("✅ orderReady sent to socket:", socketId);
       } else {
         console.log("⚠️ Student NOT connected for deviceId:", order.deviceId);
       }
@@ -143,10 +144,6 @@ router.patch("/admin/:billNumber/mark-ready", adminAuth, async (req, res) => {
 
 /* =========================================================
     ✅ MARK SINGLE ITEM DELIVERED (LOCK ONLY)
-    ✅ IMPORTANT RULE:
-        - ONLY READY bill can select items
-        - DELIVERED bill cannot change
-        - NO auto-delivered here
 ========================================================= */
 router.patch(
   "/admin/:billNumber/items/:index/deliver",
@@ -158,7 +155,6 @@ router.patch(
       const order = await Order.findOne({ billNumber });
       if (!order) return res.status(404).json({ message: "Order not found" });
 
-      // ✅ only READY allowed
       if (order.orderStatus !== "READY") {
         return res.status(400).json({
           message: `Only READY bills can be delivered. Current status: ${order.orderStatus}`,
@@ -166,7 +162,6 @@ router.patch(
         });
       }
 
-      // ✅ block if already DELIVERED
       if (order.orderStatus === "DELIVERED") {
         return res.status(400).json({
           message: "This bill is already DELIVERED.",
@@ -180,7 +175,6 @@ router.patch(
         return res.status(400).json({ message: "Invalid item index" });
       }
 
-      // ✅ Once delivered cannot undo
       if (order.items[idx].delivered === true) {
         return res.json({
           message: "Item already delivered (locked)",
@@ -191,7 +185,6 @@ router.patch(
       order.items[idx].delivered = true;
       order.items[idx].deliveredAt = new Date();
 
-      // ✅ DO NOT auto set DELIVERED here
       await order.save();
 
       res.json({
@@ -208,9 +201,6 @@ router.patch(
 
 /* =========================================================
     ✅ MARK ENTIRE BILL DELIVERED (FINAL CONFIRM)
-    RULES:
-      - ONLY READY bill
-      - only if ALL items delivered
 ========================================================= */
 router.patch(
   "/admin/:billNumber/mark-delivered",
@@ -222,7 +212,6 @@ router.patch(
       const order = await Order.findOne({ billNumber });
       if (!order) return res.status(404).json({ message: "Order not found" });
 
-      // ✅ already delivered
       if (order.orderStatus === "DELIVERED") {
         return res.status(400).json({
           message: "This bill is already DELIVERED",
@@ -230,7 +219,6 @@ router.patch(
         });
       }
 
-      // ✅ only READY allowed
       if (order.orderStatus !== "READY") {
         return res.status(400).json({
           message: `Cannot mark delivered. Bill status is ${order.orderStatus}`,
@@ -238,7 +226,6 @@ router.patch(
         });
       }
 
-      // ✅ must deliver all items first
       if (!allItemsDelivered(order)) {
         return res.status(400).json({
           message:
@@ -536,10 +523,8 @@ router.get("/bill/:qrNumber", async (req, res) => {
             .details { margin-top: 10px; font-size: 14px; }
             .status-paid { color: #27ae60; font-weight: bold; }
             .status-fail { color:#e74c3c; font-weight:bold; }
-
             .total-row { font-size: 18px; font-weight: bold; color: #27ae60; border-top: 1px solid #eee; padding-top: 10px; margin-top: 10px; }
             .total-col { color:#27ae60; font-weight:800; }
-
             table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; }
             th, td { border-bottom: 1px solid #eee; padding: 8px; }
             th { background: #f5f5f5; text-align: left; }
@@ -552,17 +537,14 @@ router.get("/bill/:qrNumber", async (req, res) => {
               <h2>🧾 JJ Canteen Bill</h2>
               <p>${formattedDate}</p>
             </div>
-
             <div class="qr-section">
               <img src="${order.qrImage}" alt="Order QR"/>
               <p><strong>Scan at Counter</strong></p>
             </div>
-
             <div class="details">
               <p><b>Bill No:</b> ${order.billNumber}</p>
               <p><b>Collection:</b> ${order.collectionTime}</p>
               <p><b>Payment:</b> ${order.paymentMethod}</p>
-
               <p>
                 <b>Status:</b>
                 <span class="${
@@ -571,11 +553,8 @@ router.get("/bill/:qrNumber", async (req, res) => {
                   ${order.paymentStatus}
                 </span>
               </p>
-
               <p><b>Order Status:</b> ${order.orderStatus || "N/A"}</p>
-
               ${deliveredBadge}
-
               <table>
                 <thead>
                   <tr>
@@ -590,12 +569,10 @@ router.get("/bill/:qrNumber", async (req, res) => {
                   ${itemRows || `<tr><td colspan="5">No items</td></tr>`}
                 </tbody>
               </table>
-
               <div class="total-row">
                 Total Amount: ₹${rupee(order.totalAmount)}
               </div>
             </div>
-
             <div class="footer">
               Thank you ❤️ JJ Canteen
             </div>
