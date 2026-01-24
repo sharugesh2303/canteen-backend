@@ -4,22 +4,30 @@ const mongoose = require("mongoose");
 const OrderItemSchema = new mongoose.Schema(
   {
     // ✅ menu item id (optional but helpful)
-    itemId: { type: String },
+    itemId: { type: String, default: null },
 
     // ✅ item name
-    name: { type: String, required: true },
+    name: { type: String, required: true, trim: true },
 
     // ✅ quantity
     quantity: { type: Number, required: true, min: 1 },
 
     // ✅ FINAL unit price (after offer) - actual pay price
-    unitPrice: { type: Number, required: true },
+    // 🔥 FIX: Old orders may not have unitPrice, so default needed
+    unitPrice: { type: Number, default: 0, min: 0 },
 
     // ✅ Original price (MRP/before discount) - for strike display
-    originalPrice: { type: Number, default: 0 },
+    originalPrice: { type: Number, default: 0, min: 0 },
 
     // ✅ offer percentage used
-    offerPercent: { type: Number, default: 0 },
+    offerPercent: { type: Number, default: 0, min: 0 },
+
+    /* ===================================================
+        ✅ DELIVERY TRACKING (IMPORTANT FOR CHEF PANEL)
+        Once item delivered => lock it
+    =================================================== */
+    delivered: { type: Boolean, default: false },
+    deliveredAt: { type: Date, default: null },
   },
   { _id: false }
 );
@@ -34,12 +42,14 @@ const OrderSchema = new mongoose.Schema(
     totalAmount: {
       type: Number,
       required: true,
+      min: 0,
     },
 
     /* Pickup */
     collectionTime: {
       type: String,
       required: true,
+      trim: true,
     },
 
     /* Payment */
@@ -55,14 +65,18 @@ const OrderSchema = new mongoose.Schema(
       default: "PENDING",
     },
 
-    paymentId: String,
+    paymentId: { type: String, default: null },
 
-    /* ✅ ORDER STATUS (Kitchen Progress) */
+    /* ✅ ORDER STATUS (Kitchen Progress + Delivery) */
     orderStatus: {
       type: String,
-      enum: ["PLACED", "PREPARING", "READY", "COLLECTED"],
+      enum: ["PLACED", "PREPARING", "READY", "COLLECTED", "DELIVERED"],
       default: "PLACED",
+      index: true,
     },
+
+    /* ✅ Delivered bill tracking (whole bill) */
+    deliveredAt: { type: Date, default: null },
 
     /* 🔐 DEVICE IDENTIFIER (NO LOGIN) */
     deviceId: {
@@ -75,15 +89,17 @@ const OrderSchema = new mongoose.Schema(
     billNumber: {
       type: String,
       unique: true,
+      index: true,
     },
 
     qrNumber: {
       type: String,
       unique: true,
+      index: true,
     },
 
-    qrImage: String,
-    qrVisibleAt: Date,
+    qrImage: { type: String, default: null },
+    qrVisibleAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

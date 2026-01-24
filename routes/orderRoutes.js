@@ -20,7 +20,6 @@ const admin = require("../firebase/firebaseAdmin");
     ✅ helper: detect if deviceId already hashed (sha256)
 ========================================================= */
 function isAlreadyHashedDeviceId(deviceId) {
-  // sha256 hex length = 64
   return typeof deviceId === "string" && /^[a-f0-9]{64}$/i.test(deviceId);
 }
 
@@ -33,8 +32,16 @@ function rupee(n) {
 }
 
 /* =========================================================
+    ✅ helper: check all items delivered
+========================================================= */
+function allItemsDelivered(order) {
+  const items = order.items || [];
+  if (items.length === 0) return false;
+  return items.every((it) => it.delivered === true);
+}
+
+/* =========================================================
     1. GET ALL ORDERS (ADMIN ONLY)
-    Endpoint: GET /api/orders/admin/all
 ========================================================= */
 router.get("/admin/all", adminAuth, async (req, res) => {
   try {
@@ -48,23 +55,26 @@ router.get("/admin/all", adminAuth, async (req, res) => {
 
 /* =========================================================
     ✅ MARK ORDER READY + SEND SOCKET + SEND FCM PUSH
-    Endpoint: PATCH /api/orders/admin/:billNumber/mark-ready
 ========================================================= */
 router.patch("/admin/:billNumber/mark-ready", adminAuth, async (req, res) => {
   try {
     const { billNumber } = req.params;
 
     const order = await Order.findOne({ billNumber });
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    // ✅ block delivered bills
+    if (order.orderStatus === "DELIVERED") {
+      return res.status(400).json({
+        message: "This bill is already DELIVERED. Cannot mark READY again.",
+      });
     }
 
-    // ✅ Update order status
     order.orderStatus = "READY";
     await order.save();
 
     /* =========================================================
-        ✅ SEND REALTIME NOTIFICATION TO STUDENT (SOCKET.IO)
+        ✅ SEND SOCKET NOTIFICATION
     ========================================================= */
     const io = req.app.get("io");
     const studentSockets = req.app.get("studentSockets");
@@ -83,13 +93,6 @@ router.patch("/admin/:billNumber/mark-ready", adminAuth, async (req, res) => {
         console.log("✅ order_ready sent to socket:", socketId);
       } else {
         console.log("⚠️ Student NOT connected for deviceId:", order.deviceId);
-        console.log(
-          "📌 Connected deviceIds:",
-          Array.from(studentSockets.keys()).slice(0, 5),
-          studentSockets.size > 5
-            ? `... +${studentSockets.size - 5} more`
-            : ""
-        );
       }
     } else {
       console.log("⚠️ Socket not available or missing deviceId");
@@ -139,8 +142,129 @@ router.patch("/admin/:billNumber/mark-ready", adminAuth, async (req, res) => {
 });
 
 /* =========================================================
+    ✅ MARK SINGLE ITEM DELIVERED (LOCK ONLY)
+    ✅ IMPORTANT RULE:
+        - ONLY READY bill can select items
+        - DELIVERED bill cannot change
+        - NO auto-delivered here
+========================================================= */
+router.patch(
+  "/admin/:billNumber/items/:index/deliver",
+  adminAuth,
+  async (req, res) => {
+    try {
+      const { billNumber, index } = req.params;
+
+      const order = await Order.findOne({ billNumber });
+      if (!order) return res.status(404).json({ message: "Order not found" });
+
+      // ✅ only READY allowed
+      if (order.orderStatus !== "READY") {
+        return res.status(400).json({
+          message: `Only READY bills can be delivered. Current status: ${order.orderStatus}`,
+          order,
+        });
+      }
+
+      // ✅ block if already DELIVERED
+      if (order.orderStatus === "DELIVERED") {
+        return res.status(400).json({
+          message: "This bill is already DELIVERED.",
+          order,
+        });
+      }
+
+      const idx = Number(index);
+
+      if (!order.items || idx < 0 || idx >= order.items.length) {
+        return res.status(400).json({ message: "Invalid item index" });
+      }
+
+      // ✅ Once delivered cannot undo
+      if (order.items[idx].delivered === true) {
+        return res.json({
+          message: "Item already delivered (locked)",
+          order,
+        });
+      }
+
+      order.items[idx].delivered = true;
+      order.items[idx].deliveredAt = new Date();
+
+      // ✅ DO NOT auto set DELIVERED here
+      await order.save();
+
+      res.json({
+        message: "✅ Item locked as delivered",
+        allItemsDelivered: allItemsDelivered(order),
+        order,
+      });
+    } catch (err) {
+      console.error("❌ ITEM DELIVER ERROR:", err);
+      res.status(500).json({ message: "Server error" });
+    }
+  }
+);
+
+/* =========================================================
+    ✅ MARK ENTIRE BILL DELIVERED (FINAL CONFIRM)
+    RULES:
+      - ONLY READY bill
+      - only if ALL items delivered
+========================================================= */
+router.patch(
+  "/admin/:billNumber/mark-delivered",
+  adminAuth,
+  async (req, res) => {
+    try {
+      const { billNumber } = req.params;
+
+      const order = await Order.findOne({ billNumber });
+      if (!order) return res.status(404).json({ message: "Order not found" });
+
+      // ✅ already delivered
+      if (order.orderStatus === "DELIVERED") {
+        return res.status(400).json({
+          message: "This bill is already DELIVERED",
+          order,
+        });
+      }
+
+      // ✅ only READY allowed
+      if (order.orderStatus !== "READY") {
+        return res.status(400).json({
+          message: `Cannot mark delivered. Bill status is ${order.orderStatus}`,
+          order,
+        });
+      }
+
+      // ✅ must deliver all items first
+      if (!allItemsDelivered(order)) {
+        return res.status(400).json({
+          message:
+            "Cannot mark delivered. Some items are not delivered/selected yet.",
+          order,
+        });
+      }
+
+      order.orderStatus = "DELIVERED";
+      order.deliveredAt = new Date();
+
+      await order.save();
+
+      res.json({
+        message: "✅ Bill marked as DELIVERED",
+        order,
+      });
+    } catch (err) {
+      console.error("❌ MARK DELIVERED ERROR:", err);
+      res.status(500).json({ message: "Server error" });
+    }
+  }
+);
+
+/* =========================================================
     2. GET ORDERS (STUDENT – DEVICE BASED)
-    Endpoint: GET /api/orders?deviceId=xxxx
 ========================================================= */
 router.get("/", async (req, res) => {
   try {
@@ -152,15 +276,11 @@ router.get("/", async (req, res) => {
         .json({ error: "deviceId query parameter is required" });
     }
 
-    // ✅ Accept both raw or already-hashed
     const deviceId = isAlreadyHashedDeviceId(rawDeviceId)
       ? rawDeviceId
       : hashDeviceId(rawDeviceId);
 
-    const orders = await Order.find({ deviceId }).sort({
-      createdAt: -1,
-    });
-
+    const orders = await Order.find({ deviceId }).sort({ createdAt: -1 });
     res.json(orders);
   } catch (err) {
     console.error("❌ FETCH STUDENT ORDERS ERROR:", err);
@@ -170,7 +290,6 @@ router.get("/", async (req, res) => {
 
 /* =========================================================
     3. CREATE ORDER (POST-PAYMENT SUCCESS)
-    Endpoint: POST /api/orders
 ========================================================= */
 router.post("/", async (req, res) => {
   try {
@@ -185,24 +304,29 @@ router.post("/", async (req, res) => {
     } = req.body;
 
     if (!incomingDeviceId) {
-      return res
-        .status(400)
-        .json({ error: "deviceId is required to create an order" });
+      return res.status(400).json({
+        error: "deviceId is required to create an order",
+      });
     }
 
-    // ✅ If frontend already sends hashed id, don't hash again
     const deviceId = isAlreadyHashedDeviceId(incomingDeviceId)
       ? incomingDeviceId
       : hashDeviceId(incomingDeviceId);
 
-    console.log("📌 ORDER CREATE incomingDeviceId:", incomingDeviceId);
-    console.log("📌 ORDER CREATE stored deviceId (hashed):", deviceId);
+    const mappedItems = (items || []).map((it) => ({
+      itemId: it.itemId || it._id || null,
+      name: it.name,
+      quantity: Number(it.quantity || 1),
+      unitPrice: Number(it.unitPrice ?? it.price ?? 0),
+      originalPrice: Number(it.originalPrice ?? 0),
+      offerPercent: Number(it.offerPercent ?? 0),
+      delivered: false,
+      deliveredAt: null,
+    }));
 
-    // ✅ Generate unique identifiers
     const billNumber = "BILL-" + Date.now();
     const qrNumber = crypto.randomUUID();
 
-    // ✅ QR should open bill page (for student + chef)
     const qrUrl = `${
       process.env.BASE_URL || "http://localhost:10000"
     }/api/orders/bill/${qrNumber}`;
@@ -210,7 +334,7 @@ router.post("/", async (req, res) => {
     const qrImage = await generateQrImage(qrUrl);
 
     const order = await Order.create({
-      items,
+      items: mappedItems,
       totalAmount,
       collectionTime,
       paymentMethod,
@@ -222,6 +346,7 @@ router.post("/", async (req, res) => {
       qrImage,
       qrVisibleAt: new Date(),
       orderStatus: "PLACED",
+      deliveredAt: null,
     });
 
     res.status(201).json(order);
@@ -233,7 +358,6 @@ router.post("/", async (req, res) => {
 
 /* =========================================================
     4. DAILY REVENUE REPORT (ADMIN ONLY)
-    Endpoint: GET /api/orders/admin/daily-revenue?date=YYYY-MM-DD
 ========================================================= */
 router.get("/admin/daily-revenue", adminAuth, async (req, res) => {
   try {
@@ -269,7 +393,9 @@ router.get("/admin/daily-revenue", adminAuth, async (req, res) => {
           };
         }
         productMap[item.name].quantity += item.quantity;
-        productMap[item.name].revenue += item.price * item.quantity;
+
+        const unit = Number(item.unitPrice ?? item.price ?? 0);
+        productMap[item.name].revenue += unit * item.quantity;
       });
     });
 
@@ -286,17 +412,13 @@ router.get("/admin/daily-revenue", adminAuth, async (req, res) => {
 });
 
 /* =========================================================
-    ✅ NEW: GET ORDER DETAILS BY QR (JSON)
-    Endpoint: GET /api/orders/details/:qrNumber
-    (Chef app / Admin use)
+    ✅ GET ORDER DETAILS BY QR (JSON)
 ========================================================= */
 router.get("/details/:qrNumber", async (req, res) => {
   try {
     const order = await Order.findOne({ qrNumber: req.params.qrNumber });
 
-    if (!order) {
-      return res.status(404).json({ message: "Invalid QR Code" });
-    }
+    if (!order) return res.status(404).json({ message: "Invalid QR Code" });
 
     res.json({
       billNumber: order.billNumber,
@@ -306,7 +428,9 @@ router.get("/details/:qrNumber", async (req, res) => {
       paymentStatus: order.paymentStatus,
       paymentMethod: order.paymentMethod,
       orderStatus: order.orderStatus,
+      deliveredAt: order.deliveredAt || null,
       totalAmount: order.totalAmount,
+      qrImage: order.qrImage,
       items: order.items || [],
     });
   } catch (err) {
@@ -316,38 +440,87 @@ router.get("/details/:qrNumber", async (req, res) => {
 });
 
 /* =========================================================
+    ✅ GET ORDER DETAILS BY BILL NUMBER (JSON)
+========================================================= */
+router.get("/details-by-bill/:billNumber", async (req, res) => {
+  try {
+    const billNumber = req.params.billNumber;
+
+    const order = await Order.findOne({ billNumber });
+    if (!order) return res.status(404).json({ message: "Bill not found" });
+
+    res.json({
+      billNumber: order.billNumber,
+      qrNumber: order.qrNumber,
+      createdAt: order.createdAt,
+      collectionTime: order.collectionTime,
+      paymentStatus: order.paymentStatus,
+      paymentMethod: order.paymentMethod,
+      orderStatus: order.orderStatus,
+      deliveredAt: order.deliveredAt || null,
+      totalAmount: order.totalAmount,
+      qrImage: order.qrImage,
+      items: order.items || [],
+    });
+  } catch (err) {
+    console.error("❌ DETAILS BY BILL ERROR:", err);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+/* =========================================================
     5. BILL PAGE (QR VIEW – PUBLIC)
-    Endpoint: GET /api/orders/bill/:qrNumber
 ========================================================= */
 router.get("/bill/:qrNumber", async (req, res) => {
   try {
     const order = await Order.findOne({ qrNumber: req.params.qrNumber });
 
-    if (!order) {
-      return res.status(404).send("<h1>Error: Invalid QR Code</h1>");
-    }
+    if (!order) return res.status(404).send("<h1>Error: Invalid QR Code</h1>");
 
     const formattedDate = new Date(order.createdAt).toLocaleString("en-IN");
 
-    // ✅ Build items rows
     const itemRows = (order.items || [])
       .map((it, index) => {
         const name = it.name || it.itemName || "Item";
         const qty = Number(it.quantity || 0);
-        const unit = Number(it.price || 0);
+
+        const unit = Number(it.unitPrice ?? it.price ?? 0);
+        const original = Number(it.originalPrice ?? 0);
+        const offer = Number(it.offerPercent ?? 0);
+
         const subtotal = unit * qty;
+
+        const priceHtml =
+          offer > 0 && original > unit
+            ? `<span style="font-weight:700;">₹${rupee(unit)}</span>
+               <span style="color:#999; text-decoration:line-through; font-size:12px; margin-left:6px;">
+                 ₹${rupee(original)}
+               </span>
+               <span style="color:#e74c3c; font-size:11px; font-weight:700; margin-left:6px;">
+                 ${offer}% OFF
+               </span>`
+            : `<span style="font-weight:700;">₹${rupee(unit)}</span>`;
 
         return `
           <tr>
             <td>${index + 1}</td>
             <td style="text-align:left;">${name}</td>
             <td style="text-align:center;">${qty}</td>
-            <td style="text-align:right;">₹${rupee(unit)}</td>
-            <td style="text-align:right;">₹${rupee(subtotal)}</td>
+            <td style="text-align:right;">${priceHtml}</td>
+            <td class="total-col" style="text-align:right;">₹${rupee(
+              subtotal
+            )}</td>
           </tr>
         `;
       })
       .join("");
+
+    const deliveredBadge =
+      order.orderStatus === "DELIVERED"
+        ? `<div style="margin-top:10px; padding:10px; background:#e8fff0; border:1px solid #27ae60; color:#1e8449; font-weight:800; border-radius:10px; text-align:center;">
+            ✅ Already Delivered
+          </div>`
+        : "";
 
     res.send(`
       <html>
@@ -363,7 +536,10 @@ router.get("/bill/:qrNumber", async (req, res) => {
             .details { margin-top: 10px; font-size: 14px; }
             .status-paid { color: #27ae60; font-weight: bold; }
             .status-fail { color:#e74c3c; font-weight:bold; }
-            .total-row { font-size: 18px; font-weight: bold; color: #e67e22; border-top: 1px solid #eee; padding-top: 10px; margin-top: 10px; }
+
+            .total-row { font-size: 18px; font-weight: bold; color: #27ae60; border-top: 1px solid #eee; padding-top: 10px; margin-top: 10px; }
+            .total-col { color:#27ae60; font-weight:800; }
+
             table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; }
             th, td { border-bottom: 1px solid #eee; padding: 8px; }
             th { background: #f5f5f5; text-align: left; }
@@ -398,7 +574,8 @@ router.get("/bill/:qrNumber", async (req, res) => {
 
               <p><b>Order Status:</b> ${order.orderStatus || "N/A"}</p>
 
-              <!-- ✅ ITEMS TABLE -->
+              ${deliveredBadge}
+
               <table>
                 <thead>
                   <tr>
