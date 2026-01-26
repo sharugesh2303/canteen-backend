@@ -513,6 +513,7 @@ router.get("/bill/:qrNumber", async (req, res) => {
     if (!order) return res.status(404).send("<h1>Error: Invalid QR Code</h1>");
 
     const formattedDate = new Date(order.createdAt).toLocaleString("en-IN");
+    const isDelivered = order.orderStatus === "DELIVERED";
 
     const itemRows = (order.items || [])
       .map((it, index) => {
@@ -536,10 +537,13 @@ router.get("/bill/:qrNumber", async (req, res) => {
                </span>`
             : `<span style="font-weight:700;">₹${rupee(unit)}</span>`;
 
+        // Added tick mark if the individual item is delivered
+        const itemDeliveredMark = it.delivered ? '<span style="color:#27ae60; margin-left:5px;">✅</span>' : '';
+
         return `
           <tr>
             <td>${index + 1}</td>
-            <td style="text-align:left;">${name}</td>
+            <td style="text-align:left;">${name} ${itemDeliveredMark}</td>
             <td style="text-align:center;">${qty}</td>
             <td style="text-align:right;">${priceHtml}</td>
             <td class="total-col" style="text-align:right;">₹${rupee(
@@ -550,13 +554,6 @@ router.get("/bill/:qrNumber", async (req, res) => {
       })
       .join("");
 
-    const deliveredBadge =
-      order.orderStatus === "DELIVERED"
-        ? `<div style="margin-top:10px; padding:10px; background:#e8fff0; border:1px solid #27ae60; color:#1e8449; font-weight:800; border-radius:10px; text-align:center;">
-            ✅ Already Delivered
-          </div>`
-        : "";
-
     res.send(`
       <html>
         <head>
@@ -564,10 +561,33 @@ router.get("/bill/:qrNumber", async (req, res) => {
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <style>
             body { font-family: 'Segoe UI', sans-serif; padding: 20px; color: #333; background:#fafafa; }
-            .bill-container { max-width: 430px; margin: auto; border: 2px solid #eee; padding: 16px; border-radius: 14px; background:white; }
+            .bill-container { max-width: 430px; margin: auto; border: 2px solid #eee; padding: 16px; border-radius: 14px; background:white; position: relative; overflow: hidden; }
             .header { text-align: center; border-bottom: 2px dashed #eee; padding-bottom: 10px; }
-            .qr-section { text-align: center; margin: 16px 0; }
+            
+            /* QR Section & Stamp Logic */
+            .qr-section { text-align: center; margin: 16px 0; position: relative; display: inline-block; width: 100%; }
             .qr-section img { width: 200px; height: 200px; }
+            
+            .delivered-stamp {
+              position: absolute;
+              top: 50%;
+              left: 50%;
+              transform: translate(-50%, -50%) rotate(-15deg);
+              border: 5px solid #e74c3c;
+              color: #e74c3c;
+              font-size: 32px;
+              font-weight: 900;
+              padding: 10px 20px;
+              text-transform: uppercase;
+              border-radius: 10px;
+              opacity: 0.8;
+              z-index: 10;
+              background: rgba(255,255,255,0.85);
+              pointer-events: none;
+              font-family: 'Courier New', Courier, monospace;
+              letter-spacing: 2px;
+            }
+
             .details { margin-top: 10px; font-size: 14px; }
             .status-paid { color: #27ae60; font-weight: bold; }
             .status-fail { color:#e74c3c; font-weight:bold; }
@@ -587,7 +607,8 @@ router.get("/bill/:qrNumber", async (req, res) => {
             </div>
             <div class="qr-section">
               <img src="${order.qrImage}" alt="Order QR"/>
-              <p><strong>Scan at Counter</strong></p>
+              ${isDelivered ? '<div class="delivered-stamp">DELIVERED ✅</div>' : ''}
+              <p><strong>${isDelivered ? 'Order Collected' : 'Scan at Counter'}</strong></p>
             </div>
             <div class="details">
               <p><b>Bill No:</b> ${order.billNumber}</p>
@@ -602,7 +623,7 @@ router.get("/bill/:qrNumber", async (req, res) => {
                 </span>
               </p>
               <p><b>Order Status:</b> ${order.orderStatus || "N/A"}</p>
-              ${deliveredBadge}
+              
               <table>
                 <thead>
                   <tr>
@@ -623,6 +644,7 @@ router.get("/bill/:qrNumber", async (req, res) => {
             </div>
             <div class="footer">
               Thank you ❤️ JJ Canteen
+              ${isDelivered ? `<br><span style="color:#27ae60">Delivered on ${new Date(order.deliveredAt).toLocaleString("en-IN")}</span>` : ''}
             </div>
           </div>
         </body>
