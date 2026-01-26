@@ -22,9 +22,7 @@ require("./models/Advertisement");
 require("./models/Feedback");
 require("./models/ServiceHours");
 require("./models/Offer");
-
-// ✅ Notification Token model
-require("./models/NotificationToken");
+require("./models/NotificationToken"); // ✅ FCM Tokens
 
 /* ======================================================
     LOAD ROUTES
@@ -47,7 +45,7 @@ const staffOrderRoutes = require("./routes/staffOrderRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 
 /* ======================================================
-    VALIDATE ROUTES
+    VALIDATE ROUTERS (SAFETY CHECK)
 ====================================================== */
 if (typeof offerRoutes !== "function") {
   console.error("❌ offerRoutes is NOT a router function");
@@ -71,16 +69,22 @@ if (typeof notificationRoutes !== "function") {
 ====================================================== */
 const app = express();
 const server = http.createServer(app);
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
+
 
 const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST", "PATCH", "DELETE"],
   },
-
-  // ✅ prefer websocket (stable for Android)
   transports: ["websocket"],
+
+  // 🔥 Prevent cloud proxy from killing idle sockets
+  pingInterval: 25000,   // send ping every 25s
+  pingTimeout: 60000,    // allow 60s before considering dead
 });
+
 
 const PORT = process.env.PORT || 10000;
 
@@ -88,29 +92,21 @@ const PORT = process.env.PORT || 10000;
     GLOBAL MIDDLEWARE
 ====================================================== */
 app.use(cors());
-
-// ✅ JSON support
 app.use(express.json());
-
-// ✅ NEW (RECOMMENDED): urlencoded support (WebView HTML / forms safe)
 app.use(express.urlencoded({ extended: true }));
-
-// ✅ OPTIONAL: serve static files (logo/css for bill)
 app.use("/public", express.static("public"));
 
 /* ======================================================
-    ✅ DEVICE HASH HELPER
+    DEVICE HASH HELPER
 ====================================================== */
 function hashDeviceId(deviceId) {
   return crypto.createHash("sha256").update(deviceId).digest("hex");
 }
 
 /* ======================================================
-    ✅ SOCKET MAP STORAGE
+    SOCKET MAP STORAGE (HASH ONLY)
 ====================================================== */
 const studentSockets = new Map();
-
-// expose io and map to all routes
 app.set("io", io);
 app.set("studentSockets", studentSockets);
 
@@ -129,16 +125,14 @@ mongoose
     ROUTES REGISTRATION
 ====================================================== */
 
-// ✅ Register tokens for push notifications
+// ✅ Notifications
 app.use("/api/notifications", notificationRoutes);
 
-// ✅ Staff Login/Register Routes
+// ✅ Staff
 app.use("/api/staff", staffAuthRoutes);
-
-// ✅ Staff Orders Route
 app.use("/api/staff", staffOrderRoutes);
 
-// ✅ Orders Route (Student & Admin)
+// ✅ Orders (Student + Admin)
 app.use("/api/orders", orderRoutes);
 
 // ✅ Admin Modules
@@ -153,7 +147,7 @@ app.use("/api/admin/subcategories", subCategoryRoutes);
 app.use("/api/admin/offers", offerRoutes);
 app.use("/api/offers", offerRoutes);
 
-// ✅ Public / Student APIs
+// ✅ Public APIs
 app.use("/api/feedback", feedbackRoutes);
 app.use("/api/menu", menuRoutes);
 app.use("/api/subcategories", subCategoryRoutes);
@@ -196,59 +190,53 @@ app.get("/api/menu/public", async (req, res) => {
 });
 
 /* ======================================================
-    ✅ SOCKET EVENTS (REALTIME NOTIFICATION SYSTEM)
+    SOCKET EVENTS (HASH ONLY SYSTEM)
 ====================================================== */
 io.on("connection", (socket) => {
   console.log("🔌 Socket connected:", socket.id);
 
-  /*
-    Student should emit one of:
-      socket.emit("register_student", { deviceId })
-      socket.emit("register_student", deviceId)
-  */
   socket.on("register_student", (payload) => {
     try {
       let deviceId = null;
 
-      if (typeof payload === "string") {
-        deviceId = payload;
-      } else if (payload && typeof payload === "object") {
-        deviceId = payload.deviceId;
-      }
+      if (typeof payload === "string") deviceId = payload;
+      else if (payload && typeof payload === "object") deviceId = payload.deviceId;
 
       if (!deviceId) {
         console.log("⚠️ register_student called without deviceId");
         return;
       }
 
-      // ✅ store exact key
-      studentSockets.set(deviceId, socket.id);
-
-      // ✅ if incoming is raw, also store hashed
+      // ✅ ALWAYS USE HASH ONLY
       const hashed = deviceId.length === 64 ? deviceId : hashDeviceId(deviceId);
+
+      // ♻️ Replace old socket if reconnected
+      const oldSocket = studentSockets.get(hashed);
+      if (oldSocket && oldSocket !== socket.id) {
+        console.log("♻️ Replacing old socket for:", hashed);
+      }
+
       studentSockets.set(hashed, socket.id);
 
-      console.log("✅ Student registered deviceId:", deviceId, "->", socket.id);
-      console.log("✅ Student registered hashed :", hashed, "->", socket.id);
+      console.log("📲 Student registered (HASH):", hashed, "->", socket.id);
       console.log("📌 Total Connected Students:", studentSockets.size);
     } catch (err) {
       console.error("❌ register_student error:", err.message);
     }
   });
 
-  socket.on("disconnect", () => {
-    console.log("❌ Socket disconnected:", socket.id);
+  socket.on("disconnect", (reason) => {
+  console.log("❌ Socket disconnected:", socket.id, "Reason:", reason);
 
-    // remove mapping for this socket
-    for (const [deviceId, sId] of studentSockets.entries()) {
-      if (sId === socket.id) {
-        studentSockets.delete(deviceId);
-        console.log("🗑️ Removed student mapping:", deviceId);
-      }
+  for (const [deviceId, sId] of studentSockets.entries()) {
+    if (sId === socket.id) {
+      studentSockets.delete(deviceId);
+      console.log("🗑️ Removed mapping for:", deviceId);
     }
+  }
 
-    console.log("📌 Total Connected Students:", studentSockets.size);
-  });
+  console.log("📌 Total Connected Students:", studentSockets.size);
+});
 });
 
 /* ======================================================
