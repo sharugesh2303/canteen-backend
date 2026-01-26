@@ -454,6 +454,54 @@ router.get("/details-by-bill/:billNumber", async (req, res) => {
     res.status(500).json({ message: "Internal Server Error" });
   }
 });
+/* =========================================================
+    🧑‍🍳 CHEF SCAN — STATUS BASED RESPONSE
+========================================================= */
+router.get("/scan/:qrNumber", async (req, res) => {
+  try {
+    const order = await Order.findOne({ qrNumber: req.params.qrNumber });
+
+    if (!order) {
+      return res.status(404).json({ message: "Invalid QR Code" });
+    }
+
+    // 🚫 Already Delivered → Warning only
+    if (order.orderStatus === "DELIVERED") {
+      return res.json({
+        status: "DELIVERED",
+        message: "⚠️ This order is already delivered",
+        billNumber: order.billNumber,
+      });
+    }
+
+    // ⏳ Still Placed → Not ready warning
+    if (order.orderStatus === "PLACED") {
+      return res.json({
+        status: "PLACED",
+        message: "⏳ Order is not ready yet",
+        billNumber: order.billNumber,
+      });
+    }
+
+    // ✅ Ready → Send full order details
+    if (order.orderStatus === "READY") {
+      return res.json({
+        status: "READY",
+        billNumber: order.billNumber,
+        items: order.items,
+        totalAmount: order.totalAmount,
+        paymentMethod: order.paymentMethod,
+        collectionTime: order.collectionTime,
+        message: "✅ Order ready for delivery",
+      });
+    }
+
+    res.status(400).json({ message: "Unknown order state" });
+  } catch (err) {
+    console.error("❌ CHEF SCAN ERROR:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
 /* =========================================================
     5. BILL PAGE (QR VIEW – PUBLIC)
