@@ -502,9 +502,8 @@ router.get("/scan/:qrNumber", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
-
 /* =========================================================
-    5. BILL PAGE (QR VIEW – PUBLIC)
+    5. BILL PAGE (QR VIEW – FIXED STAMP OVER QR)
 ========================================================= */
 router.get("/bill/:qrNumber", async (req, res) => {
   try {
@@ -519,25 +518,8 @@ router.get("/bill/:qrNumber", async (req, res) => {
       .map((it, index) => {
         const name = it.name || it.itemName || "Item";
         const qty = Number(it.quantity || 0);
-
         const unit = Number(it.unitPrice ?? it.price ?? 0);
-        const original = Number(it.originalPrice ?? 0);
-        const offer = Number(it.offerPercent ?? 0);
-
         const subtotal = unit * qty;
-
-        const priceHtml =
-          offer > 0 && original > unit
-            ? `<span style="font-weight:700;">₹${rupee(unit)}</span>
-               <span style="color:#999; text-decoration:line-through; font-size:12px; margin-left:6px;">
-                 ₹${rupee(original)}
-               </span>
-               <span style="color:#e74c3c; font-size:11px; font-weight:700; margin-left:6px;">
-                 ${offer}% OFF
-               </span>`
-            : `<span style="font-weight:700;">₹${rupee(unit)}</span>`;
-
-        // Added tick mark if the individual item is delivered
         const itemDeliveredMark = it.delivered ? '<span style="color:#27ae60; margin-left:5px;">✅</span>' : '';
 
         return `
@@ -545,10 +527,8 @@ router.get("/bill/:qrNumber", async (req, res) => {
             <td>${index + 1}</td>
             <td style="text-align:left;">${name} ${itemDeliveredMark}</td>
             <td style="text-align:center;">${qty}</td>
-            <td style="text-align:right;">${priceHtml}</td>
-            <td class="total-col" style="text-align:right;">₹${rupee(
-              subtotal
-            )}</td>
+            <td style="text-align:right;">₹${rupee(unit)}</td>
+            <td class="total-col" style="text-align:right;">₹${rupee(subtotal)}</td>
           </tr>
         `;
       })
@@ -561,38 +541,47 @@ router.get("/bill/:qrNumber", async (req, res) => {
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <style>
             body { font-family: 'Segoe UI', sans-serif; padding: 20px; color: #333; background:#fafafa; }
-            .bill-container { max-width: 430px; margin: auto; border: 2px solid #eee; padding: 16px; border-radius: 14px; background:white; position: relative; overflow: hidden; }
+            .bill-container { max-width: 430px; margin: auto; border: 2px solid #eee; padding: 16px; border-radius: 14px; background:white; position: relative; }
             .header { text-align: center; border-bottom: 2px dashed #eee; padding-bottom: 10px; }
             
-            /* QR Section & Stamp Logic */
-            .qr-section { text-align: center; margin: 16px 0; position: relative; display: inline-block; width: 100%; }
-            .qr-section img { width: 200px; height: 200px; }
+            /* Fixed QR & Stamp Logic */
+            .qr-wrapper { 
+              position: relative; 
+              display: inline-block; 
+              width: 220px; 
+              height: 220px; 
+              margin: 20px auto;
+            }
+            .qr-wrapper img { 
+              width: 100%; 
+              height: 100%; 
+              display: block;
+            }
             
             .delivered-stamp {
               position: absolute;
               top: 50%;
               left: 50%;
-              transform: translate(-50%, -50%) rotate(-15deg);
-              border: 5px solid #e74c3c;
+              transform: translate(-50%, -50%) rotate(-20deg);
+              border: 6px double #e74c3c;
               color: #e74c3c;
-              font-size: 32px;
+              font-size: 28px;
               font-weight: 900;
-              padding: 10px 20px;
+              padding: 8px 15px;
               text-transform: uppercase;
-              border-radius: 10px;
-              opacity: 0.8;
-              z-index: 10;
-              background: rgba(255,255,255,0.85);
+              border-radius: 4px;
+              background: rgba(255, 255, 255, 0.8);
+              z-index: 99;
+              white-space: nowrap;
               pointer-events: none;
               font-family: 'Courier New', Courier, monospace;
-              letter-spacing: 2px;
+              box-shadow: 0 0 10px rgba(0,0,0,0.1);
             }
 
-            .details { margin-top: 10px; font-size: 14px; }
-            .status-paid { color: #27ae60; font-weight: bold; }
-            .status-fail { color:#e74c3c; font-weight:bold; }
+            .qr-outer { text-align: center; }
+            .details { margin-top: 15px; font-size: 14px; }
+            .status-paid { color: #27ae60; font-weight: bold; background: #e8f8f0; padding: 2px 6px; border-radius: 4px; }
             .total-row { font-size: 18px; font-weight: bold; color: #27ae60; border-top: 1px solid #eee; padding-top: 10px; margin-top: 10px; }
-            .total-col { color:#27ae60; font-weight:800; }
             table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; }
             th, td { border-bottom: 1px solid #eee; padding: 8px; }
             th { background: #f5f5f5; text-align: left; }
@@ -602,27 +591,24 @@ router.get("/bill/:qrNumber", async (req, res) => {
         <body>
           <div class="bill-container">
             <div class="header">
-              <h2>🧾 JJ Canteen Bill</h2>
-              <p>${formattedDate}</p>
+              <h2 style="margin:0;">🧾 JJ Canteen Bill</h2>
+              <p style="margin:5px 0;">${formattedDate}</p>
             </div>
-            <div class="qr-section">
-              <img src="${order.qrImage}" alt="Order QR"/>
-              ${isDelivered ? '<div class="delivered-stamp">DELIVERED ✅</div>' : ''}
-              <p><strong>${isDelivered ? 'Order Collected' : 'Scan at Counter'}</strong></p>
+
+            <div class="qr-outer">
+              <div class="qr-wrapper">
+                <img src="${order.qrImage}" alt="Order QR"/>
+                ${isDelivered ? '<div class="delivered-stamp">DELIVERED</div>' : ''}
+              </div>
+              <p><strong>${isDelivered ? 'Order Collected ✅' : 'Scan at Counter'}</strong></p>
             </div>
+
             <div class="details">
               <p><b>Bill No:</b> ${order.billNumber}</p>
               <p><b>Collection:</b> ${order.collectionTime}</p>
               <p><b>Payment:</b> ${order.paymentMethod}</p>
-              <p>
-                <b>Status:</b>
-                <span class="${
-                  order.paymentStatus === "PAID" ? "status-paid" : "status-fail"
-                }">
-                  ${order.paymentStatus}
-                </span>
-              </p>
-              <p><b>Order Status:</b> ${order.orderStatus || "N/A"}</p>
+              <p><b>Status:</b> <span class="status-paid">${order.paymentStatus}</span></p>
+              <p><b>Order Status:</b> ${order.orderStatus}</p>
               
               <table>
                 <thead>
@@ -635,7 +621,7 @@ router.get("/bill/:qrNumber", async (req, res) => {
                   </tr>
                 </thead>
                 <tbody>
-                  ${itemRows || `<tr><td colspan="5">No items</td></tr>`}
+                  ${itemRows}
                 </tbody>
               </table>
               <div class="total-row">
