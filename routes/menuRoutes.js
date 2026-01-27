@@ -51,69 +51,65 @@ router.get("/", adminAuth, async (req, res) => {
 });
 
 /* =====================================================
-    🌍 GET MENU ITEMS (PUBLIC – UPDATED WITH OFFER LOGIC)
+    🌍 GET MENU ITEMS (PUBLIC)
     GET /api/menu/public
 ===================================================== */
 router.get("/public", async (req, res) => {
   try {
     const MenuItem = mongoose.model("MenuItem");
-    const Offer = mongoose.model("Offer"); // Load Offer model
+    const Offer = mongoose.model("Offer");
 
-    /* ✅ ENSURE SINGLE SERVICE HOURS DOCUMENT */
+    /* ✅ Ensure Service Hours Doc Exists */
     let hours = await ServiceHours.findOne();
-    if (!hours) {
-      hours = await ServiceHours.create({});
-    }
+    if (!hours) hours = await ServiceHours.create({});
 
-    const allowBreakfast = isNowBetween(
-      hours.breakfast.start,
-      hours.breakfast.end
-    );
+    const allowBreakfast = isNowBetween(hours.breakfast.start, hours.breakfast.end);
+    const allowLunch = isNowBetween(hours.lunch.start, hours.lunch.end);
 
-    const allowLunch = isNowBetween(
-      hours.lunch.start,
-      hours.lunch.end
-    );
-
-    // 1. Fetch items and active offers
+    /* 1️⃣ Fetch items + active offers */
     const [items, activeOffers] = await Promise.all([
       MenuItem.find().populate("subCategory", "name imageUrl"),
-      Offer.find({ isActive: true }) // Only get active campaigns
+      Offer.find({ isActive: true })
     ]);
 
-    // 2. Map through items and calculate discounts
+    /* 2️⃣ Add Offer + Stock Logic */
     const processedItems = items.map(item => {
       const itemObj = item.toObject();
-      
-      // Check if this specific item ID is in any active offer list
-      const activeOffer = activeOffers.find(offer => 
+
+      // 🔴 STOCK CHECK
+      const isAvailable = itemObj.stock > 0;
+
+      // 🎁 OFFER CHECK
+      const activeOffer = activeOffers.find(offer =>
         offer.applicableItems.some(id => id.toString() === item._id.toString())
       );
 
       if (activeOffer) {
         const discount = (itemObj.price * activeOffer.discountPercentage) / 100;
+
         return {
           ...itemObj,
+          isAvailable, // 👈 IMPORTANT FOR APP
           isOffer: true,
-          originalPrice: itemObj.price, // Send the original price for strikethrough
-          price: Math.round(itemObj.price - discount), // Send discounted price as primary price
+          originalPrice: itemObj.price,
+          price: Math.round(itemObj.price - discount),
           discountPercentage: activeOffer.discountPercentage
         };
       }
 
-      // No offer found for this item
-      return { 
-        ...itemObj, 
-        isOffer: false, 
-        originalPrice: itemObj.price 
+      return {
+        ...itemObj,
+        isAvailable, // 👈 IMPORTANT FOR APP
+        isOffer: false,
+        originalPrice: itemObj.price
       };
     });
 
-    // 3. Filter items based on service hours
+    /* 3️⃣ Filter by Service Hours ONLY (NOT STOCK) */
     const filteredItems = processedItems.filter(item => {
       if (item.category === "Breakfast") return allowBreakfast;
       if (item.category === "Lunch") return allowLunch;
-      return true; // Snacks, Stationery, Essentials
+      return true;
     });
 
     res.json(filteredItems);
@@ -134,9 +130,7 @@ router.get("/:id", adminAuth, async (req, res) => {
       "name imageUrl"
     );
 
-    if (!item) {
-      return res.status(404).json({ msg: "Menu item not found" });
-    }
+    if (!item) return res.status(404).json({ msg: "Menu item not found" });
 
     res.json(item);
   } catch (err) {
@@ -160,16 +154,9 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
       subCategory: req.body.subCategory || null,
     };
 
-    if (req.file) {
-      update.imageUrl = req.file.path;
-    }
+    if (req.file) update.imageUrl = req.file.path;
 
-    const item = await MenuItem.findByIdAndUpdate(
-      req.params.id,
-      update,
-      { new: true }
-    );
-
+    const item = await MenuItem.findByIdAndUpdate(req.params.id, update, { new: true });
     res.json(item);
   } catch (err) {
     console.error("❌ UPDATE MENU ERROR:", err);
