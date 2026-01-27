@@ -72,7 +72,6 @@ const server = http.createServer(app);
 server.keepAliveTimeout = 65000;
 server.headersTimeout = 66000;
 
-
 const io = new Server(server, {
   cors: {
     origin: "*",
@@ -81,10 +80,9 @@ const io = new Server(server, {
   transports: ["websocket"],
 
   // 🔥 Prevent cloud proxy from killing idle sockets
-  pingInterval: 25000,   // send ping every 25s
-  pingTimeout: 60000,    // allow 60s before considering dead
+  pingInterval: 25000,
+  pingTimeout: 60000,
 });
-
 
 const PORT = process.env.PORT || 10000;
 
@@ -149,7 +147,7 @@ app.use("/api/offers", offerRoutes);
 
 // ✅ Public APIs
 app.use("/api/feedback", feedbackRoutes);
-app.use("/api/menu", menuRoutes);
+app.use("/api/menu", menuRoutes); // 🔥 This already contains /public with time filtering
 app.use("/api/subcategories", subCategoryRoutes);
 app.use("/api", serviceHoursRoutes);
 
@@ -170,24 +168,8 @@ app.patch("/api/admin/canteen-status", (req, res) => {
   res.json({ isOpen: canteenOpen });
 });
 
-/* ======================================================
-    PUBLIC MENU (STUDENT)
-====================================================== */
-app.get("/api/menu/public", async (req, res) => {
-  try {
-    const MenuItem = mongoose.model("MenuItem");
-
-    const items = await MenuItem.find({ stock: { $gt: 0 } }).populate(
-      "subCategory",
-      "name imageUrl"
-    );
-
-    res.json(items);
-  } catch (err) {
-    console.error("❌ PUBLIC MENU FETCH ERROR:", err);
-    res.status(500).json({ message: "Failed to fetch menu" });
-  }
-});
+/* ❌ REMOVED DUPLICATE PUBLIC MENU ROUTE */
+/* The correct one exists in routes/menuRoutes.js */
 
 /* ======================================================
     SOCKET EVENTS (HASH ONLY SYSTEM)
@@ -207,10 +189,8 @@ io.on("connection", (socket) => {
         return;
       }
 
-      // ✅ ALWAYS USE HASH ONLY
       const hashed = deviceId.length === 64 ? deviceId : hashDeviceId(deviceId);
 
-      // ♻️ Replace old socket if reconnected
       const oldSocket = studentSockets.get(hashed);
       if (oldSocket && oldSocket !== socket.id) {
         console.log("♻️ Replacing old socket for:", hashed);
@@ -226,17 +206,17 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", (reason) => {
-  console.log("❌ Socket disconnected:", socket.id, "Reason:", reason);
+    console.log("❌ Socket disconnected:", socket.id, "Reason:", reason);
 
-  for (const [deviceId, sId] of studentSockets.entries()) {
-    if (sId === socket.id) {
-      studentSockets.delete(deviceId);
-      console.log("🗑️ Removed mapping for:", deviceId);
+    for (const [deviceId, sId] of studentSockets.entries()) {
+      if (sId === socket.id) {
+        studentSockets.delete(deviceId);
+        console.log("🗑️ Removed mapping for:", deviceId);
+      }
     }
-  }
 
-  console.log("📌 Total Connected Students:", studentSockets.size);
-});
+    console.log("📌 Total Connected Students:", studentSockets.size);
+  });
 });
 
 /* ======================================================
