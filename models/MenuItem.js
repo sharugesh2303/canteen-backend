@@ -2,44 +2,37 @@ const mongoose = require("mongoose");
 
 const MenuItemSchema = new mongoose.Schema(
   {
-    /* ================= BASIC INFO ================= */
     name: {
       type: String,
       required: true,
       trim: true
     },
-
     price: {
       type: Number,
       required: true,
       min: 0
     },
-
     category: {
       type: String,
       required: true,
       trim: true
     },
-
-    /* ================= SUB CATEGORY =================
-       IMPORTANT FIX:
-       - Model name MUST match SubCategory.js
-       - Use "SubCategory" (case-sensitive)
-    ================================================= */
+    location: {
+      type: String,
+      required: true,
+      enum: ["canteen", "cafeteria"],
+      default: "canteen"
+    },
     subCategory: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "SubCategory", // ✅ FIXED (was wrong earlier)
+      ref: "SubCategory",
       default: null
     },
-
-    /* ================= IMAGE ================= */
     imageUrl: {
       type: String,
       required: true,
       trim: true
     },
-
-    /* ================= STOCK ================= */
     stock: {
       type: Number,
       required: true,
@@ -48,13 +41,8 @@ const MenuItemSchema = new mongoose.Schema(
     }
   },
   {
-    timestamps: true // ✅ replaces uploadedAt
+    timestamps: true 
   }
 );
 
-/* ================= EXPORT =================
-   IMPORTANT FIX:
-   - Model name must be "MenuItem"
-   - Used everywhere: mongoose.model("MenuItem")
-================================================= */
 module.exports = mongoose.model("MenuItem", MenuItemSchema);

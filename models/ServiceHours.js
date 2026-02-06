@@ -2,6 +2,8 @@ const mongoose = require("mongoose");
 
 const serviceHoursSchema = new mongoose.Schema(
   {
+    // ✅ Add location field to differentiate records
+    location: { type: String, enum: ["canteen", "cafeteria"], unique: true, required: true },
     breakfast: {
       start: { type: String, default: "08:00" },
       end: { type: String, default: "11:00" },

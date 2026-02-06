@@ -6,7 +6,7 @@ const router = express.Router();
 const Offer = mongoose.model("Offer");
 
 /* ======================================================
-   ✅ Helper: combine date + time into Date objec
+    ✅ Helper: combine date + time into Date object
 ====================================================== */
 function combineDateAndTime(date, time) {
   const [hours, minutes] = time.split(":").map(Number);
@@ -16,12 +16,16 @@ function combineDateAndTime(date, time) {
 }
 
 /* ======================================================
-   ✅ AUTO-EXPIRE OFFERS (LOCAL TIME SAFE)
+    ✅ AUTO-EXPIRE OFFERS (LOCAL TIME SAFE)
 ====================================================== */
-const expireOffers = async () => {
+const expireOffers = async (location) => {
   const now = new Date();
 
-  const activeOffers = await Offer.find({ isActive: true });
+  // Filter by location during expiration check to be precise
+  const query = { isActive: true };
+  if (location) query.location = location;
+
+  const activeOffers = await Offer.find(query);
 
   const expiredIds = activeOffers
     .filter((offer) => {
@@ -38,22 +42,41 @@ const expireOffers = async () => {
   }
 };
 
-/* ================= CREATE OFFER ================= */
+/* ================= CREATE OFFER ================= 
+   Tagging the offer with the correct location
+================================================== */
 router.post("/", adminAuth, async (req, res) => {
   try {
-    const offer = await Offer.create(req.body);
+    // Ensure location is saved from the form
+    const offerData = {
+      ...req.body,
+      location: req.body.location || "canteen"
+    };
+    const offer = await Offer.create(offerData);
     res.status(201).json(offer);
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
 });
 
-/* ================= GET ALL OFFERS (ADMIN) ================= */
+/* ================= GET ALL OFFERS (ADMIN) ================= 
+   🟢 PERSISTENCE FIX: Filter by mode (canteen/cafeteria)
+=========================================================== */
 router.get("/", adminAuth, async (req, res) => {
   try {
-    await expireOffers();
+    const { mode } = req.query; // Get mode from frontend request
+    
+    await expireOffers(mode);
 
-    const offers = await Offer.find()
+    let query = {};
+    if (mode === "cafeteria") {
+      query.location = "cafeteria";
+    } else {
+      // Default to canteen or items with no location field
+      query = { $or: [{ location: "canteen" }, { location: { $exists: false } }] };
+    }
+
+    const offers = await Offer.find(query)
       .populate("applicableItems", "name price imageUrl category")
       .sort({ createdAt: -1 });
 
@@ -64,16 +87,23 @@ router.get("/", adminAuth, async (req, res) => {
 });
 
 /* ================= GET ACTIVE OFFERS (PUBLIC / STUDENT) =================
-   ✅ FIXED: JS-side datetime check (no UTC issues)
-   Endpoint: GET /api/offers/public
+    🟢 PERSISTENCE FIX: Filter by location query param
 ========================================================================= */
 router.get("/public", async (req, res) => {
   try {
-    await expireOffers();
+    const { location } = req.query;
+    await expireOffers(location);
 
     const now = new Date();
 
-    const offers = await Offer.find({ isActive: true })
+    let query = { isActive: true };
+    if (location === "cafeteria") {
+      query.location = "cafeteria";
+    } else {
+      query = { $or: [{ location: "canteen" }, { location: { $exists: false } }] };
+    }
+
+    const offers = await Offer.find(query)
       .populate("applicableItems", "name price imageUrl category")
       .sort({ createdAt: -1 });
 

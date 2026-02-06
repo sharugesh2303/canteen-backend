@@ -3,6 +3,7 @@
  * ================================== */
 
 const express = require("express");
+const mongoose = require("mongoose"); // ✅ Added to access MenuItem model
 const router = express.Router();
 const crypto = require("crypto");
 const Order = require("../models/Order");
@@ -41,11 +42,19 @@ function allItemsDelivered(order) {
 }
 
 /* =========================================================
-    1. GET ALL ORDERS (ADMIN ONLY)
+    1. GET ALL ORDERS (ADMIN ONLY) - FILTERED BY LOCATION
 ========================================================= */
 router.get("/admin/all", adminAuth, async (req, res) => {
   try {
-    const orders = await Order.find().sort({ createdAt: -1 });
+    const { location } = req.query;
+    
+    // Create filter object
+    let filter = {};
+    if (location && location !== "all") {
+      filter.location = location; 
+    }
+
+    const orders = await Order.find(filter).sort({ createdAt: -1 });
     res.json(orders);
   } catch (err) {
     console.error("❌ ADMIN FETCH ALL ORDERS ERROR:", err);
@@ -115,7 +124,7 @@ router.patch("/admin/:billNumber/mark-ready", adminAuth, async (req, res) => {
             token: tokenDoc.fcmToken,
             notification: {
               title: "Order Ready ✅",
-              body: "Your order is ready! Please collect from counter.",
+              body: `Your order from JJ ${order.location || 'Canteen'} is ready!`,
             },
             data: {
               billNumber: order.billNumber || "",
@@ -276,7 +285,7 @@ router.get("/", async (req, res) => {
 });
 
 /* =========================================================
-    3. CREATE ORDER (POST-PAYMENT SUCCESS)
+    3. CREATE ORDER (POST-PAYMENT SUCCESS) ✅ REDUCES STOCK
 ========================================================= */
 router.post("/", async (req, res) => {
   try {
@@ -288,7 +297,10 @@ router.post("/", async (req, res) => {
       paymentStatus,
       paymentId,
       deviceId: incomingDeviceId,
+      location // ✅ Capturing location from body
     } = req.body;
+
+    const MenuItem = mongoose.model("MenuItem"); // ✅ Get MenuItem model
 
     if (!incomingDeviceId) {
       return res.status(400).json({
@@ -311,6 +323,16 @@ router.post("/", async (req, res) => {
       deliveredAt: null,
     }));
 
+    // 🔥 STOCK REDUCTION LOGIC 🔥
+    // Iterates through each item and reduces its available stock
+    for (const item of mappedItems) {
+      if (item.itemId) {
+        await MenuItem.findByIdAndUpdate(item.itemId, {
+          $inc: { stock: -item.quantity } // Subtract the quantity from available stock
+        });
+      }
+    }
+
     const billNumber = "BILL-" + Date.now();
     const qrNumber = crypto.randomUUID();
 
@@ -331,6 +353,7 @@ router.post("/", async (req, res) => {
       billNumber,
       qrNumber,
       qrImage,
+      location: location || "canteen", // ✅ Default to canteen if missing
       qrVisibleAt: new Date(),
       orderStatus: "PLACED",
       deliveredAt: null,
@@ -348,7 +371,7 @@ router.post("/", async (req, res) => {
 ========================================================= */
 router.get("/admin/daily-revenue", adminAuth, async (req, res) => {
   try {
-    const { date } = req.query;
+    const { date, location } = req.query;
 
     if (!date) {
       return res.status(400).json({ message: "Date parameter is required" });
@@ -360,10 +383,16 @@ router.get("/admin/daily-revenue", adminAuth, async (req, res) => {
     const end = new Date(date);
     end.setHours(23, 59, 59, 999);
 
-    const orders = await Order.find({
+    let query = {
       createdAt: { $gte: start, $lte: end },
       paymentStatus: "PAID",
-    });
+    };
+
+    if (location && location !== "all") {
+      query.location = location;
+    }
+
+    const orders = await Order.find(query);
 
     let totalRevenue = 0;
     const productMap = {};
@@ -418,6 +447,7 @@ router.get("/details/:qrNumber", async (req, res) => {
       deliveredAt: order.deliveredAt || null,
       totalAmount: order.totalAmount,
       qrImage: order.qrImage,
+      location: order.location,
       items: order.items || [],
     });
   } catch (err) {
@@ -447,6 +477,7 @@ router.get("/details-by-bill/:billNumber", async (req, res) => {
       deliveredAt: order.deliveredAt || null,
       totalAmount: order.totalAmount,
       qrImage: order.qrImage,
+      location: order.location,
       items: order.items || [],
     });
   } catch (err) {
@@ -454,6 +485,7 @@ router.get("/details-by-bill/:billNumber", async (req, res) => {
     res.status(500).json({ message: "Internal Server Error" });
   }
 });
+
 /* =========================================================
     🧑‍🍳 CHEF SCAN — STATUS BASED RESPONSE
 ========================================================= */
@@ -502,8 +534,9 @@ router.get("/scan/:qrNumber", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
+
 /* =========================================================
-    5. BILL PAGE (QR VIEW – FIXED STAMP OVER QR)
+    5. BILL PAGE (QR VIEW – DYNAMIC BRANDING)
 ========================================================= */
 router.get("/bill/:qrNumber", async (req, res) => {
   try {
@@ -513,6 +546,9 @@ router.get("/bill/:qrNumber", async (req, res) => {
 
     const formattedDate = new Date(order.createdAt).toLocaleString("en-IN");
     const isDelivered = order.orderStatus === "DELIVERED";
+    
+    // ✅ Dynamic Branding based on location
+    const brandName = order.location === "cafeteria" ? "JJ Cafeteria" : "JJ Canteen";
 
     const itemRows = (order.items || [])
       .map((it, index) => {
@@ -537,7 +573,7 @@ router.get("/bill/:qrNumber", async (req, res) => {
     res.send(`
       <html>
         <head>
-          <title>Canteen Bill - ${order.billNumber}</title>
+          <title>${brandName} Bill - ${order.billNumber}</title>
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <style>
             body { font-family: 'Segoe UI', sans-serif; padding: 20px; color: #333; background:#fafafa; }
@@ -591,7 +627,7 @@ router.get("/bill/:qrNumber", async (req, res) => {
         <body>
           <div class="bill-container">
             <div class="header">
-              <h2 style="margin:0;">🧾 JJ Canteen Bill</h2>
+              <h2 style="margin:0;">🧾 ${brandName} Bill</h2>
               <p style="margin:5px 0;">${formattedDate}</p>
             </div>
 
@@ -629,7 +665,7 @@ router.get("/bill/:qrNumber", async (req, res) => {
               </div>
             </div>
             <div class="footer">
-              Thank you ❤️ JJ Canteen
+              Thank you ❤️ ${brandName}
               ${isDelivered ? `<br><span style="color:#27ae60">Delivered on ${new Date(order.deliveredAt).toLocaleString("en-IN")}</span>` : ''}
             </div>
           </div>

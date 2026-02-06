@@ -45,6 +45,14 @@ const offerSchema = new mongoose.Schema(
       required: true,
     },
 
+    /* 🟢 PERSISTENCE FIX: Added Location field */
+    location: {
+      type: String,
+      required: true,
+      enum: ["canteen", "cafeteria"],
+      default: "canteen",
+    },
+
     applicableCategories: [
       {
         type: String,
@@ -63,34 +71,28 @@ const offerSchema = new mongoose.Schema(
       default: true,
     },
   },
-  { timestamps: true }
+  { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );
 
 /* ======================================================
    🔁 AUTO-EXPIRE LOGIC (MODEL LEVEL)
 ==================================================== */
 
-// Virtual field: is currently valid
+// Virtual field: checks if the offer is currently valid based on time
 offerSchema.virtual("isCurrentlyValid").get(function () {
   const now = new Date();
 
-  const startDateTime = combineDateAndTime(
-    this.startDate,
-    this.startTime
-  );
-
-  const endDateTime = combineDateAndTime(
-    this.endDate,
-    this.endTime
-  );
+  const startDateTime = combineDateAndTime(this.startDate, this.startTime);
+  const endDateTime = combineDateAndTime(this.endDate, this.endTime);
 
   return now >= startDateTime && now <= endDateTime;
 });
 
-// Middleware: auto-disable expired offers on find
+// Middleware: auto-disable expired offers on find queries
 offerSchema.pre(/^find/, async function (next) {
   const now = new Date();
 
+  // This updates documents where the end datetime has passed the current time
   await this.model.updateMany(
     {
       isActive: true,
@@ -103,7 +105,7 @@ offerSchema.pre(/^find/, async function (next) {
                   { $dateToString: { format: "%Y-%m-%d", date: "$endDate" } },
                   "T",
                   "$endTime",
-                  ":00.000Z",
+                  ":00.000", // Standard ISO format helper
                 ],
               },
             },

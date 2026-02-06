@@ -8,6 +8,7 @@ const http = require("http");
 const mongoose = require("mongoose");
 const { Server } = require("socket.io");
 const crypto = require("crypto");
+const path = require("path"); // ✅ Added for reliable path handling
 require("dotenv").config();
 
 /* ======================================================
@@ -92,7 +93,10 @@ const PORT = process.env.PORT || 10000;
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use("/public", express.static("public"));
+
+// ✅ Static File Serving
+app.use("/public", express.static(path.join(__dirname, "public")));
+app.use("/uploads", express.static(path.join(__dirname, "uploads"))); // ✅ Ensure image uploads are accessible
 
 /* ======================================================
     DEVICE HASH HELPER
@@ -110,7 +114,7 @@ app.set("studentSockets", studentSockets);
 
 /* ======================================================
     DATABASE CONNECTION
-====================================================== */
+===================================================== */
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB connected"))
@@ -120,8 +124,35 @@ mongoose
   });
 
 /* ======================================================
+    SHOP STATUS (GLOBAL STATE FOR CANTEEN & CAFETERIA)
+===================================================== */
+// ✅ Track status for both locations independently
+let shopStatus = {
+  canteen: true,
+  cafeteria: true
+};
+
+// matches frontend calls to: /api/status/public?location=...
+app.get("/api/status/public", (req, res) => {
+  const loc = req.query.location || 'canteen';
+  res.json({ isOpen: shopStatus[loc] !== undefined ? shopStatus[loc] : true });
+});
+
+// matches frontend calls to: /api/admin/status-toggle
+app.patch("/api/admin/status-toggle", (req, res) => {
+  const { location } = req.body;
+  if (location && shopStatus[location] !== undefined) {
+    shopStatus[location] = !shopStatus[location];
+    console.log(`🔔 Status Update: ${location.toUpperCase()} is now ${shopStatus[location] ? 'OPEN' : 'CLOSED'}`);
+    res.json({ isOpen: shopStatus[location], location });
+  } else {
+    res.status(400).json({ msg: "Invalid location provided" });
+  }
+});
+
+/* ======================================================
     ROUTES REGISTRATION
-====================================================== */
+===================================================== */
 
 // ✅ Notifications
 app.use("/api/notifications", notificationRoutes);
@@ -135,10 +166,17 @@ app.use("/api/orders", orderRoutes);
 
 // ✅ Admin Modules
 app.use("/api/admin", adminAuthRoutes);
-app.use("/api/admin", revenueRoutes);
+
+// 🔥 FIXED: Changed from "/api/admin/revenue" to "/api/admin" 
+// This allows the route in revenueRoutes.js (GET /daily-revenue) 
+// to be accessed at /api/admin/daily-revenue as expected by the frontend.
+app.use("/api/admin", revenueRoutes); 
+
 app.use("/api/admin/advertisements", advertisementRoutes);
 app.use("/api/admin/feedback", feedbackRoutes);
-app.use("/api/admin/menu", menuRoutes);
+
+// ✅ Menu Management (Admin Sync logic handled here)
+app.use("/api/admin/menu", menuRoutes); 
 app.use("/api/admin/subcategories", subCategoryRoutes);
 
 // ✅ Offers
@@ -147,7 +185,7 @@ app.use("/api/offers", offerRoutes);
 
 // ✅ Public APIs
 app.use("/api/feedback", feedbackRoutes);
-app.use("/api/menu", menuRoutes); // 🔥 This already contains /public with time filtering
+app.use("/api/menu", menuRoutes); // 🔥 Contains /public with time/location filtering
 app.use("/api/subcategories", subCategoryRoutes);
 app.use("/api", serviceHoursRoutes);
 
@@ -155,25 +193,8 @@ app.use("/api", serviceHoursRoutes);
 app.use("/advertisements", advertisementRoutes);
 
 /* ======================================================
-    CANTEEN STATUS (GLOBAL STATE)
-====================================================== */
-let canteenOpen = true;
-
-app.get("/api/canteen-status/public", (req, res) => {
-  res.json({ isOpen: canteenOpen });
-});
-
-app.patch("/api/admin/canteen-status", (req, res) => {
-  canteenOpen = !canteenOpen;
-  res.json({ isOpen: canteenOpen });
-});
-
-/* ❌ REMOVED DUPLICATE PUBLIC MENU ROUTE */
-/* The correct one exists in routes/menuRoutes.js */
-
-/* ======================================================
     SOCKET EVENTS (HASH ONLY SYSTEM)
-====================================================== */
+===================================================== */
 io.on("connection", (socket) => {
   console.log("🔌 Socket connected:", socket.id);
 
@@ -221,14 +242,14 @@ io.on("connection", (socket) => {
 
 /* ======================================================
     HEALTH CHECK
-====================================================== */
+===================================================== */
 app.get("/", (req, res) => {
   res.send("✅ JJ Canteen Backend Running");
 });
 
 /* =====================================================
     START SERVER
-====================================================== */
+===================================================== */
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });

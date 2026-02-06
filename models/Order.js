@@ -3,29 +3,20 @@ const mongoose = require("mongoose");
 /* ---------------- ORDER ITEM ---------------- */
 const OrderItemSchema = new mongoose.Schema(
   {
-    // ✅ menu item id (optional but helpful)
     itemId: { type: String, default: null },
-
-    // ✅ item name
     name: { type: String, required: true, trim: true },
-
-    // ✅ quantity
     quantity: { type: Number, required: true, min: 1 },
 
-    // ✅ FINAL unit price (after offer) - actual pay price
-    // 🔥 FIX: Old orders may not have unitPrice, so default needed
+    // Final paid price
     unitPrice: { type: Number, default: 0, min: 0 },
 
-    // ✅ Original price (MRP/before discount) - for strike display
+    // MRP
     originalPrice: { type: Number, default: 0, min: 0 },
 
-    // ✅ offer percentage used
+    // Discount used
     offerPercent: { type: Number, default: 0, min: 0 },
 
-    /* ===================================================
-        ✅ DELIVERY TRACKING (IMPORTANT FOR CHEF PANEL)
-        Once item delivered => lock it
-    =================================================== */
+    /* Delivery tracking per item */
     delivered: { type: Boolean, default: false },
     deliveredAt: { type: Date, default: null },
   },
@@ -35,6 +26,18 @@ const OrderItemSchema = new mongoose.Schema(
 /* ---------------- ORDER ---------------- */
 const OrderSchema = new mongoose.Schema(
   {
+    /* =====================================================
+       🏪 NEW: ORDER LOCATION (CANTEEN / CAFETERIA)
+       Required for Admin split view
+    ===================================================== */
+    location: {
+      type: String,
+      enum: ["canteen", "cafeteria"],
+      required: true,
+      default: "canteen",
+      index: true,
+    },
+
     /* Items */
     items: { type: [OrderItemSchema], default: [] },
 
@@ -67,7 +70,7 @@ const OrderSchema = new mongoose.Schema(
 
     paymentId: { type: String, default: null },
 
-    /* ✅ ORDER STATUS (Kitchen Progress + Delivery) */
+    /* Kitchen Status */
     orderStatus: {
       type: String,
       enum: ["PLACED", "PREPARING", "READY", "COLLECTED", "DELIVERED"],
@@ -75,10 +78,10 @@ const OrderSchema = new mongoose.Schema(
       index: true,
     },
 
-    /* ✅ Delivered bill tracking (whole bill) */
+    /* Bill Delivered Time */
     deliveredAt: { type: Date, default: null },
 
-    /* 🔐 DEVICE IDENTIFIER (NO LOGIN) */
+    /* Device (student identifier) */
     deviceId: {
       type: String,
       required: true,

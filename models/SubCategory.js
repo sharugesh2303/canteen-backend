@@ -6,8 +6,16 @@ const SubCategorySchema = new mongoose.Schema(
     name: {
       type: String,
       required: true,
-      unique: true,
       trim: true
+      // 🟢 REMOVED unique: true to allow same subcategory name in different locations
+    },
+
+    /* 🟢 NEW: Location field to separate Canteen and Cafeteria */
+    location: {
+      type: String,
+      required: true,
+      enum: ["canteen", "cafeteria"],
+      default: "canteen" // 🟢 Ensures existing subcategories default to canteen
     },
 
     imageUrl: {
