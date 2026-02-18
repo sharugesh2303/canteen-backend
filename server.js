@@ -90,7 +90,19 @@ const PORT = process.env.PORT || 10000;
 /* ======================================================
     GLOBAL MIDDLEWARE
 ====================================================== */
-app.use(cors());
+app.use(
+  cors({
+    origin: [
+      "https://canteen-admin-bay.vercel.app"
+    ],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    credentials: true,
+  })
+);
+
+app.options("*", cors());
+
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -170,13 +182,13 @@ app.use("/api/admin", adminAuthRoutes);
 // 🔥 FIXED: Changed from "/api/admin/revenue" to "/api/admin" 
 // This allows the route in revenueRoutes.js (GET /daily-revenue) 
 // to be accessed at /api/admin/daily-revenue as expected by the frontend.
-app.use("/api/admin", revenueRoutes); 
+app.use("/api/admin", revenueRoutes);
 
 app.use("/api/admin/advertisements", advertisementRoutes);
 app.use("/api/admin/feedback", feedbackRoutes);
 
 // ✅ Menu Management (Admin Sync logic handled here)
-app.use("/api/admin/menu", menuRoutes); 
+app.use("/api/admin/menu", menuRoutes);
 app.use("/api/admin/subcategories", subCategoryRoutes);
 
 // ✅ Offers
