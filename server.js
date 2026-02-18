@@ -93,15 +93,12 @@ const PORT = process.env.PORT || 10000;
 app.use(
   cors({
     origin: [
-      "https://canteen-admin-bay.vercel.app", // your frontend
-      "http://localhost:5173" // local dev (optional)
+      "https://canteen-admin-bay.vercel.app",
+      "http://localhost:5173",
     ],
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true,
   })
 );
-
-app.options("*", cors());
 
 
 
