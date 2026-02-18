@@ -90,15 +90,27 @@ const PORT = process.env.PORT || 10000;
 /* ======================================================
     GLOBAL MIDDLEWARE
 ====================================================== */
-app.use(
-  cors({
-    origin: [
-      "https://canteen-admin-bay.vercel.app",
-      "http://localhost:5173",
-    ],
-    credentials: true,
-  })
-);
+const allowedOrigins = [
+  "https://canteen-admin-bay.vercel.app",
+  "http://localhost:5173"
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+}));
+
+// 🔥 VERY IMPORTANT
+app.options("*", cors());
+
 
 
 
