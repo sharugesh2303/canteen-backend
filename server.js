@@ -95,22 +95,25 @@ const allowedOrigins = [
   "http://localhost:5173"
 ];
 
-app.use(cors({
+const corsOptions = {
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
 
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       callback(new Error("Not allowed by CORS"));
     }
   },
   credentials: true,
-}));
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
 
-// 🔥 VERY IMPORTANT
-app.options(/.*/, cors());
+app.use(cors(corsOptions));
 
+// ✅ IMPORTANT — use SAME options
+app.options(/.*/, cors(corsOptions));
 
 
 
